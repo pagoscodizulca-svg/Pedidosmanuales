@@ -1,0 +1,188 @@
+import { apiFetch } from '../utils/api';
+import { create } from 'zustand';
+import { DbOrder, OrderData, OrderStatus } from '../types.js';
+
+interface AppState {
+  orders: DbOrder[];
+  historyOrders: DbOrder[];
+  loading: boolean;
+  error: string | null;
+  fetchOrders: () => Promise<void>;
+  fetchHistory: () => Promise<void>;
+  createOrder: (order: OrderData) => Promise<DbOrder>;
+  updateFullOrder: (id: string, orderData: OrderData, newStatus?: OrderStatus) => Promise<void>;
+  updateOrderStatus: (id: string, status: OrderStatus, cxcNote?: string, factNote?: string, rejectReason?: string, departmentParam?: string) => Promise<void>;
+  updateSupervisor: (id: string, supervisor: string) => Promise<void>;
+  parseOrderWithAI: (text: string) => Promise<Partial<OrderData>>;
+}
+
+export const useAppStore = create<AppState>((set, get) => ({
+  orders: [],
+  historyOrders: [],
+  loading: false,
+  error: null,
+  
+  fetchHistory: async () => {
+    set({ loading: true, error: null });
+    try {
+      const response = await apiFetch('/api/orders/history');
+      if (!response.ok) throw new Error('Failed to fetch history');
+      const data = await response.json();
+      set({ historyOrders: data, loading: false });
+    } catch (err: any) {
+      set({ error: err.message, loading: false });
+    }
+  },
+
+  fetchOrders: async () => {
+    set({ loading: true, error: null });
+    try {
+      const response = await apiFetch('/api/orders');
+      if (!response.ok) throw new Error('Failed to fetch orders');
+      const data = await response.json();
+      set({ orders: data, loading: false });
+    } catch (err: any) {
+      set({ error: err.message, loading: false });
+    }
+  },
+  
+  createOrder: async (orderData) => {
+    set({ loading: true, error: null });
+    try {
+      const newOrder: Omit<DbOrder, 'id' | 'statusHistory'> = {
+        status: 'PENDIENTE_CXC',
+        order: orderData,
+        createdAt: new Date().toISOString(),
+      };
+      // We also need id, which server handles, wait server doesn't handle ID right now
+      // Let's ensure we generate ID on frontend or backend
+      
+      const response = await apiFetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...newOrder, id: crypto.randomUUID(), statusHistory: [{
+          status: 'CREADO',
+          department: 'Ventas',
+          changedBy: 'Usuario Actual', // TODO: Get from auth
+          timestamp: new Date().toISOString()
+        }]})
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to create order');
+      }
+      const created = await response.json();
+      set({ orders: [...get().orders, created], loading: false });
+      return created;
+    } catch (err: any) {
+      set({ error: err.message, loading: false });
+      throw err;
+    }
+  },
+  
+  
+  updateFullOrder: async (id, orderData, newStatus) => {
+    try {
+       const userStr = localStorage.getItem('auth-storage');
+       let changedBy = 'Desconocido';
+       let department = 'Ventas';
+       if (userStr) {
+          const u = JSON.parse(userStr);
+          changedBy = u.state?.user?.username || changedBy;
+          department = u.state?.user?.role === 'cxc' ? 'Cuentas por Cobrar' : u.state?.user?.role === 'facturacion' ? 'Facturacin' : 'Ventas';
+       }
+
+       const historyItem = newStatus ? {
+          status: newStatus,
+          department,
+          changedBy,
+          timestamp: new Date().toISOString(),
+          reason: 'Validado y actualizado'
+       } : undefined;
+
+       const response = await apiFetch(`/api/orders/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ orderData, status: newStatus, historyItem })
+       });
+       if (!response.ok) throw new Error('Error al actualizar pedido');
+       get().fetchOrders();
+    } catch(err) {
+       console.error(err);
+    }
+  },
+
+  updateOrderStatus: async (id, status, cxcNote, factNote, rejectReason, departmentParam) => {
+    try {
+      // Determine department if not passed explicitly
+      let dept = departmentParam;
+      if (!dept) {
+        const currentOrder = get().orders.find(o => o.id === id);
+        if (status === 'PENDIENTE_FACTURACION') dept = 'Cuentas por Cobrar';
+        else if (status === 'COMPLETADO') dept = 'Facturación';
+        else if (status === 'RECHAZADO') {
+           dept = currentOrder?.status === 'PENDIENTE_CXC' ? 'Cuentas por Cobrar' : 'Facturación';
+        } else {
+           dept = 'Sistema';
+        }
+      }
+
+      const historyItem = {
+        status,
+        department: dept,
+        changedBy: 'Usuario Actual',
+        timestamp: new Date().toISOString(),
+        reason: rejectReason
+      };
+
+      const response = await apiFetch(`/api/orders/${id}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, historyItem, cxcNote, factNote, rejectReason })
+      });
+      if (!response.ok) throw new Error('Failed to update status');
+      
+      const updated = await response.json();
+      set({ orders: get().orders.map(o => o.id === id ? updated : o) });
+    } catch (err: any) {
+      set({ error: err.message });
+      throw err;
+    }
+  },
+
+  updateSupervisor: async (id, supervisor) => {
+    try {
+      const response = await apiFetch(`/api/orders/${id}/supervisor`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ supervisor })
+      });
+      if (!response.ok) throw new Error('Failed to update supervisor');
+      
+      const updated = await response.json();
+      set({ orders: get().orders.map(o => o.id === id ? updated : o) });
+    } catch (err: any) {
+      set({ error: err.message });
+      throw err;
+    }
+  },
+
+  parseOrderWithAI: async (text) => {
+    set({ loading: true, error: null });
+    try {
+      const response = await apiFetch('/api/parse-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text })
+      });
+      if (!response.ok) throw new Error('AI Parsing failed');
+      const data = await response.json();
+      set({ loading: false });
+      return data;
+    } catch (err: any) {
+      set({ error: err.message, loading: false });
+      throw err;
+    }
+  }
+}));

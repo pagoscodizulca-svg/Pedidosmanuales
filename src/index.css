@@ -1,0 +1,13 @@
+@import "tailwindcss";
+
+@theme {
+  --color-codizulca-red: #e20613;
+  --color-codizulca-cyan: #0891b2;
+}
+
+/* Custom scrollbar and base styles */
+@layer base {
+  body {
+    @apply text-slate-800 bg-slate-50 antialiased;
+  }
+}
