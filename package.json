@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx server.ts",
     "build": "tsc -b && vite build",
+    "start": "tsx server.ts",
     "lint": "oxlint",
     "preview": "vite preview"
   },
@@ -29,6 +30,7 @@
     "serverless-http": "^4.0.0",
     "tailwind-merge": "^3.7.0",
     "uuid": "^14.0.2",
+    "tsx": "^4.23.15",
     "zustand": "^5.0.15"
   },
   "devDependencies": {
@@ -43,7 +45,6 @@
     "oxlint": "^1.81.0",
     "postcss": "^8.5.29",
     "tailwindcss": "^4.3.3",
-    "tsx": "^4.23.15",
     "typescript": "~6.0.2",
     "vite": "^8.3.0"
   }
