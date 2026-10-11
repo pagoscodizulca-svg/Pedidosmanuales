@@ -34,11 +34,34 @@ router.post('/login', async (req, res) => {
       role: metadata.role || 'ventas',
       estado: metadata.estado || '',
       sucursal: metadata.sucursal || '',
-      token: authData.session.access_token // Optional for future strict RLS
+      token: authData.session.access_token,
+      refreshToken: authData.session.refresh_token
     });
   } catch (err) {
     console.error('Login error:', err);
     res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+router.post('/refresh', async (req, res) => {
+  const { refreshToken } = req.body;
+  if (!refreshToken) {
+    return res.status(400).json({ error: 'Refresh token requerido' });
+  }
+
+  try {
+    const { data, error } = await supabase.auth.refreshSession({ refresh_token: refreshToken });
+    if (error || !data.session) {
+      return res.status(401).json({ error: 'Sesión expirada' });
+    }
+
+    res.json({
+      token: data.session.access_token,
+      refreshToken: data.session.refresh_token
+    });
+  } catch (err) {
+    console.error('Refresh error:', err);
+    res.status(500).json({ error: 'Error del servidor al refrescar token' });
   }
 });
 

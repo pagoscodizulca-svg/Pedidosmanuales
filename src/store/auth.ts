@@ -7,6 +7,7 @@ export interface User {
   estado?: string;
   sucursal?: string;
   token?: string;
+  refreshToken?: string;
 }
 
 // La sesión se conserva al refrescar la página y expira a las 12 horas.
@@ -16,6 +17,7 @@ interface AuthState {
   user: User | null;
   expiresAt: number | null;
   login: (user: User) => void;
+  updateTokens: (token: string, refreshToken?: string) => void;
   logout: () => void;
 }
 
@@ -25,6 +27,16 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       expiresAt: null,
       login: (user) => set({ user, expiresAt: Date.now() + SESSION_TTL_MS }),
+      updateTokens: (token, refreshToken) =>
+        set((state) => ({
+          user: state.user
+            ? {
+                ...state.user,
+                token,
+                refreshToken: refreshToken || state.user.refreshToken,
+              }
+            : null,
+        })),
       logout: () => set({ user: null, expiresAt: null }),
     }),
     {

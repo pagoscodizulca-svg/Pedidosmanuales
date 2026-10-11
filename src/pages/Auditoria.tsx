@@ -1,6 +1,6 @@
 import { apiFetch } from '../utils/api';
 import React, { useEffect, useState, useMemo } from 'react';
-import { Database, CalendarDays, Users, Award, TrendingUp, Activity, Layers, AlertTriangle, Loader2 } from 'lucide-react';
+import { Database, CalendarDays, Users, Award, TrendingUp, Activity, Layers, AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
 import { ProductDashboardModal } from '../components/shared/ProductDashboardModal';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend, ComposedChart, Line, Cell, PieChart, Pie, LineChart
@@ -9,20 +9,30 @@ import {
 export const Auditoria: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<string | null>(null);
 
-  const fetchAnalytics = async () => {
+  const fetchAnalytics = async (forceFresh = false) => {
     try {
-      setLoading(true);
-      const res = await apiFetch('/api/analytics');
-      if (!res.ok) throw new Error('Error al cargar datos analiticos');
+      if (!data) {
+        setLoading(true);
+      }
+      setError(null);
+      const url = forceFresh ? '/api/analytics?fresh=true' : '/api/analytics';
+      const res = await apiFetch(url);
+      if (!res.ok) {
+        const errorJson = await res.json().catch(() => ({}));
+        throw new Error(errorJson.error || `Error del servidor (${res.status}) al cargar estadísticas`);
+      }
       const json = await res.json();
       setData(json);
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      console.error('Error fetching analytics:', err);
+      setError(err.message || 'Error de conexión al cargar estadísticas de auditoría');
     } finally {
       setLoading(false);
+      setLoadingAction(null);
     }
   };
 
@@ -32,7 +42,7 @@ export const Auditoria: React.FC = () => {
 
   const weeklyData = useMemo(() => {
     if (!data) return [];
-    const base = data.kpis.montoFacturado > 0 ? data.kpis.montoFacturado / 5 : 50000;
+    const base = data.kpis?.montoFacturado > 0 ? data.kpis.montoFacturado / 5 : 50000;
     return [
       { week: 'Sem. 36', Maracaibo: base * 0.8, Valencia: 0 },
       { week: 'Sem. 37', Maracaibo: base * 1.5, Valencia: 0 },
@@ -43,14 +53,43 @@ export const Auditoria: React.FC = () => {
     ];
   }, [data]);
 
-  if (loading || !data) {
+  if (loading && !data) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[500px]">
+      <div className="flex flex-col items-center justify-center min-h-[500px] bg-white rounded-2xl border border-slate-200 p-8 text-center shadow-sm">
         <Loader2 className="animate-spin text-codizulca-red mb-4" size={48} />
-        <h2 className="text-xl font-bold text-slate-700">Calculando estadísticas...</h2>
-        <p className="text-slate-500">Analizando miles de registros desde el servidor</p>
+        <h2 className="text-xl font-bold text-slate-800">Calculando estadísticas...</h2>
+        <p className="text-slate-500 text-sm mt-1 max-w-md">
+          Analizando registros consolidados desde el servidor. Esto puede tomar un momento.
+        </p>
       </div>
     );
+  }
+
+  if (error && !data) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[500px] bg-white rounded-2xl border border-slate-200 p-8 text-center shadow-sm">
+        <div className="w-16 h-16 bg-red-50 text-codizulca-red rounded-full flex items-center justify-center mb-4 border border-red-100">
+          <AlertTriangle size={32} />
+        </div>
+        <h2 className="text-xl font-black text-slate-800">No se pudieron cargar las analíticas</h2>
+        <p className="text-slate-500 text-sm mt-2 max-w-md bg-slate-50 p-3 rounded-xl border border-slate-200 font-mono text-xs text-red-600">
+          {error}
+        </p>
+        <div className="flex items-center gap-3 mt-6">
+          <button
+            onClick={() => fetchAnalytics(true)}
+            className="flex items-center gap-2 px-5 py-2.5 bg-codizulca-red text-white font-bold text-sm rounded-xl hover:bg-red-700 transition shadow-md"
+          >
+            <RefreshCw size={16} />
+            Reintentar Carga
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!data) {
+    return null;
   }
 
   const {
@@ -64,7 +103,7 @@ export const Auditoria: React.FC = () => {
   };
   const handleSyncData = () => {
     setLoadingAction('sync');
-    fetchAnalytics().then(() => setLoadingAction(null));
+    fetchAnalytics(true);
   };
 
   return (

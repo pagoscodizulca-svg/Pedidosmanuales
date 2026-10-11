@@ -6,7 +6,18 @@ const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+let cachedAnalytics: any = null;
+let lastCacheTime = 0;
+const CACHE_TTL_MS = 60 * 1000; // 60 segundos de caché en memoria
+
 router.get('/', async (req, res) => {
+  const forceFresh = req.query.fresh === 'true';
+  const now = Date.now();
+
+  if (!forceFresh && cachedAnalytics && (now - lastCacheTime < CACHE_TTL_MS)) {
+    return res.json(cachedAnalytics);
+  }
+
   try {
     let allOrders: any[] = [];
     let page = 0;
@@ -128,7 +139,7 @@ router.get('/', async (req, res) => {
       .map(([date, count]) => ({ date, count }))
       .sort((a, b) => a.date.localeCompare(b.date));
 
-    return res.json({
+    const result = {
       kpis: { kpiTotalManuales, kpiFacturados, kpiRechazados, kpiPendientes, montoFacturado, montoPendiente },
       vendorStats,
       productStats,
@@ -139,7 +150,12 @@ router.get('/', async (req, res) => {
       statusData,
       rejectReasonsData,
       dailyTrendData
-    });
+    };
+
+    cachedAnalytics = result;
+    lastCacheTime = Date.now();
+
+    return res.json(result);
 
   } catch (err) {
     console.error(err);
