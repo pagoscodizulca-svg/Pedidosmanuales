@@ -8,6 +8,7 @@ import chatRouter from './routes/chat.js';
 import authRouter from './routes/auth.js';
 import analyticsRouter from './routes/analytics.js';
 import integrationsRouter from './routes/integrations.js';
+import clientesRouter from './routes/clientes.js';
 import { requireAuth } from './middleware/auth.js';
 
 const app = express();
@@ -18,6 +19,7 @@ app.use(express.json());
 // Unprotected routes
 app.use('/api/auth', authRouter);
 app.use('/api/integrations', integrationsRouter);
+app.use('/api/clientes', requireAuth, clientesRouter);
 
 // Protected routes
 app.use('/api/orders', requireAuth, ordersRouter);

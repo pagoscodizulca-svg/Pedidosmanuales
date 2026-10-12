@@ -1,9 +1,59 @@
 import { Router } from 'express';
 import { GoogleGenAI } from '@google/genai';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import type { OrderData, ArticuloItem } from '../../src/types.js';
 
 const router = Router();
 const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+let CLIENTS: Array<{ id_cliente: string; nombre: string; vendedor: string }> = [];
+try {
+  const p = path.resolve(__dirname, '../data/clientes.json');
+  if (fs.existsSync(p)) CLIENTS = JSON.parse(fs.readFileSync(p, 'utf8'));
+} catch (e) {
+  console.warn('[parse] Error cargando catálogo de clientes:', e);
+}
+
+function enrichOrderWithClient(order: Partial<OrderData>) {
+  if (!CLIENTS.length) return;
+
+  // 1. Si viene con id_cliente, buscar por código exacto o rellenado a 6 dígitos
+  if (order.id_cliente) {
+    const raw = order.id_cliente.trim().toUpperCase();
+    const padded = raw.padStart(6, '0');
+    const match = CLIENTS.find(c => c.id_cliente === raw || c.id_cliente === padded);
+    if (match) {
+      order.id_cliente = match.id_cliente;
+      if (!order.cliente || order.cliente.trim().length === 0) {
+        order.cliente = match.nombre;
+      }
+      if (!order.ruta && match.vendedor) {
+        order.ruta = match.vendedor;
+      }
+      return;
+    }
+  }
+
+  // 2. Si viene con nombre de cliente pero sin id_cliente, buscar por coincidencia de nombre
+  if (order.cliente && order.cliente.trim()) {
+    const clientName = order.cliente.trim().toUpperCase();
+    let match = CLIENTS.find(c => c.nombre.toUpperCase() === clientName);
+    if (!match && clientName.length >= 4) {
+      match = CLIENTS.find(c => c.nombre.toUpperCase().includes(clientName) || clientName.includes(c.nombre.toUpperCase()));
+    }
+    if (match) {
+      order.id_cliente = match.id_cliente;
+      order.cliente = match.nombre;
+      if (!order.ruta && match.vendedor) {
+        order.ruta = match.vendedor;
+      }
+    }
+  }
+}
 
 const UNIT_MAP: Record<string, string> = {
   kg: 'KG', kgs: 'KG', kilo: 'KG', kilos: 'KG',
@@ -53,6 +103,7 @@ function regexFallbackParse(text: string): Partial<OrderData> {
     order.articulos!.push(item);
   }
 
+  enrichOrderWithClient(order);
   return order;
 }
 
@@ -273,6 +324,7 @@ ${text}
       art.unidad_medida = (art.unidad_medida || '').toUpperCase();
       art.sub_total = Math.round(art.cantidad_solicitada * art.precio_unitario * 100) / 100;
     });
+    enrichOrderWithClient(parsed);
     return res.json(parsed);
   } catch (error: any) {
     console.warn('[parse] Fallback heurístico:', error?.message || error);

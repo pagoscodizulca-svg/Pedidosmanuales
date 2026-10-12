@@ -1,6 +1,8 @@
 import React from 'react';
 import { Plus } from 'lucide-react';
 import type { ArticuloItem, OrderData } from '../../types';
+import { CLIENTES } from '../../data/clientes';
+import { PRODUCTOS } from '../../data/productos';
 
 export const STANDARD_ROWS = 15;
 
@@ -69,6 +71,82 @@ export const PlanillaForm: React.FC<PlanillaFormProps> = ({ value, onChange, nex
 
   const addRow = () => set({ articulos: [...value.articulos, emptyRow()] });
 
+  // Auto-completar cliente al escribir o cambiar ID de Cliente
+  const handleIdClienteChange = (raw: string) => {
+    const val = raw.toUpperCase();
+    const clean = val.trim();
+    const padded = clean ? clean.padStart(6, '0') : '';
+    const found = CLIENTES.find((c) => c.id_cliente === clean || c.id_cliente === padded);
+
+    if (found) {
+      set({
+        id_cliente: val,
+        cliente: found.nombre,
+        ruta: found.vendedor || value.ruta,
+      });
+    } else {
+      set({ id_cliente: val });
+    }
+  };
+
+  const handleIdClienteBlur = () => {
+    const raw = (value.id_cliente || '').trim();
+    if (!raw) return;
+    const padded = raw.padStart(6, '0');
+    const found = CLIENTES.find((c) => c.id_cliente === raw || c.id_cliente === padded);
+    if (found) {
+      set({
+        id_cliente: found.id_cliente,
+        cliente: found.nombre,
+        ruta: found.vendedor || value.ruta,
+      });
+    } else if (raw.length < 6 && /^\d+$/.test(raw)) {
+      set({ id_cliente: padded });
+    }
+  };
+
+  // Auto-completar código y ruta al seleccionar o escribir Nombre del Cliente
+  const handleClienteChange = (raw: string) => {
+    const val = raw.toUpperCase();
+    const found = CLIENTES.find((c) => c.nombre.toUpperCase() === val.trim());
+    if (found) {
+      set({
+        cliente: val,
+        id_cliente: found.id_cliente,
+        ruta: found.vendedor || value.ruta,
+      });
+    } else {
+      set({ cliente: val });
+    }
+  };
+
+  // Auto-completar descripción al ingresar Código de producto
+  const handleItemCodigoChange = (idx: number, raw: string) => {
+    const clean = raw.trim();
+    const padded = clean ? clean.padStart(6, '0') : '';
+    const found = PRODUCTOS.find((p) => p.id === clean || p.id === padded);
+    if (found) {
+      const arts = [...value.articulos];
+      arts[idx] = { ...arts[idx], codigo: raw, descripcion: found.descripcion };
+      onChange({ ...value, articulos: arts });
+    } else {
+      setRow(idx, 'codigo', raw);
+    }
+  };
+
+  // Auto-completar código al seleccionar o escribir Descripción de producto
+  const handleItemDescripcionChange = (idx: number, raw: string) => {
+    const upper = raw.toUpperCase();
+    const found = PRODUCTOS.find((p) => p.descripcion.toUpperCase() === upper.trim());
+    if (found) {
+      const arts = [...value.articulos];
+      arts[idx] = { ...arts[idx], descripcion: upper, codigo: found.id };
+      onChange({ ...value, articulos: arts });
+    } else {
+      setRow(idx, 'descripcion', upper);
+    }
+  };
+
   const total = calcTotal(value.articulos);
   const numero = value.numero_pedido || nextNumero;
 
@@ -77,6 +155,22 @@ export const PlanillaForm: React.FC<PlanillaFormProps> = ({ value, onChange, nex
       <datalist id="unidades-list">
         {UNIDADES.map((u) => (
           <option key={u} value={u} />
+        ))}
+      </datalist>
+
+      <datalist id="clientes-list">
+        {CLIENTES.map((c) => (
+          <option key={c.id_cliente} value={c.nombre}>
+            {c.id_cliente} {c.vendedor ? `(${c.vendedor})` : ''}
+          </option>
+        ))}
+      </datalist>
+
+      <datalist id="productos-list">
+        {PRODUCTOS.map((p) => (
+          <option key={p.id} value={p.descripcion}>
+            {p.id}
+          </option>
         ))}
       </datalist>
 
@@ -91,9 +185,10 @@ export const PlanillaForm: React.FC<PlanillaFormProps> = ({ value, onChange, nex
         <div className="flex items-center gap-2 px-3 border-r border-b border-slate-800">
           <span className="text-sm font-semibold text-slate-600">CLIENTE:</span>
           <input
+            list="clientes-list"
             className="flex-1 bg-transparent text-sm font-bold uppercase focus:outline-none focus:bg-cyan-50 px-1 py-1"
             value={value.cliente}
-            onChange={(e) => set({ cliente: e.target.value.toUpperCase() })}
+            onChange={(e) => handleClienteChange(e.target.value)}
             placeholder="NOMBRE DEL CLIENTE"
           />
         </div>
@@ -113,7 +208,8 @@ export const PlanillaForm: React.FC<PlanillaFormProps> = ({ value, onChange, nex
             <input
               className="w-24 bg-transparent text-xs font-bold text-right uppercase focus:outline-none"
               value={value.id_cliente || ''}
-              onChange={(e) => set({ id_cliente: e.target.value.toUpperCase() })}
+              onChange={(e) => handleIdClienteChange(e.target.value)}
+              onBlur={handleIdClienteBlur}
               placeholder="ID"
             />
           </div>
@@ -200,14 +296,15 @@ export const PlanillaForm: React.FC<PlanillaFormProps> = ({ value, onChange, nex
                   <input
                     className={`${cellInput} text-center text-[12px]`}
                     value={item.codigo || ''}
-                    onChange={(e) => setRow(idx, 'codigo', e.target.value)}
+                    onChange={(e) => handleItemCodigoChange(idx, e.target.value)}
                   />
                 </td>
                 <td className="border-r border-slate-800">
                   <input
+                    list="productos-list"
                     className={`${cellInput} uppercase`}
                     value={item.descripcion || ''}
-                    onChange={(e) => setRow(idx, 'descripcion', e.target.value.toUpperCase())}
+                    onChange={(e) => handleItemDescripcionChange(idx, e.target.value)}
                   />
                 </td>
                 <td className="border-r border-slate-800">
