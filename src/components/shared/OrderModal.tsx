@@ -96,28 +96,34 @@ export const OrderModal: React.FC<OrderModalProps> = ({ order, onClose }) => {
               <HistoryIcon /> Historial de Trazabilidad
             </h3>
             <div className="space-y-4">
-              {order.statusHistory.map((h, i) => (
-                <div key={i} className="flex items-center justify-between text-sm">
-                  <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-1.5 bg-slate-100 border border-slate-200 text-slate-700 font-semibold px-3 py-1.5 rounded-lg text-xs">
-                      <User size={14} className="text-codizulca-red" /> {h.changedBy}
+              {order.statusHistory.map((h, i) => {
+                const userName = (!h.changedBy || h.changedBy === 'Usuario Actual' || h.changedBy === 'Desconocido')
+                  ? (order.order?.supervisor || 'Usuario')
+                  : h.changedBy;
+
+                return (
+                  <div key={i} className="flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-1.5 bg-slate-100 border border-slate-200 text-slate-700 font-semibold px-3 py-1.5 rounded-lg text-xs">
+                        <User size={14} className="text-codizulca-red" /> {userName}
+                      </div>
+                      <span className={`px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${
+                        h.status === 'CREADO' ? 'bg-slate-100 text-slate-600' :
+                        h.status === 'COMPLETADO' ? 'bg-green-100 text-green-700' :
+                        h.status === 'RECHAZADO' ? 'bg-red-100 text-red-700' :
+                        'bg-cyan-100 text-cyan-800'
+                      }`}>
+                        {h.status.replace('_', ' ')}
+                      </span>
+                      <span className="text-slate-500 text-xs font-medium">({h.department})</span>
+                      {h.reason && <span className="text-red-600 text-xs italic ml-2">- {h.reason}</span>}
                     </div>
-                    <span className={`px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${
-                      h.status === 'CREADO' ? 'bg-slate-100 text-slate-600' :
-                      h.status === 'COMPLETADO' ? 'bg-green-100 text-green-700' :
-                      h.status === 'RECHAZADO' ? 'bg-red-100 text-red-700' :
-                      'bg-cyan-100 text-cyan-800'
-                    }`}>
-                      {h.status.replace('_', ' ')}
-                    </span>
-                    <span className="text-slate-500 text-xs font-medium">({h.department})</span>
-                    {h.reason && <span className="text-red-600 text-xs italic ml-2">- {h.reason}</span>}
+                    <div className="text-xs text-slate-400 font-medium">
+                      {new Date(h.timestamp).toLocaleString('es-VE')}
+                    </div>
                   </div>
-                  <div className="text-xs text-slate-400 font-medium">
-                    {new Date(h.timestamp).toLocaleString('es-VE')}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 

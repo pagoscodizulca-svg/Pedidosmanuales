@@ -38,6 +38,19 @@ function getUserRole(req: any): string {
   return (req.user?.user_metadata?.role || req.user?.role || 'ventas').toLowerCase();
 }
 
+// Extraer nombre de usuario autenticado
+function getUserName(req: any): string {
+  const meta = req.user?.user_metadata || {};
+  if (meta.username && typeof meta.username === 'string' && meta.username.trim()) {
+    return meta.username.trim();
+  }
+  if (req.user?.email && typeof req.user.email === 'string') {
+    const prefix = req.user.email.split('@')[0];
+    return prefix.charAt(0).toUpperCase() + prefix.slice(1);
+  }
+  return 'Usuario';
+}
+
 // Generador atómico y secuencial de correlativos sin colisiones
 async function getNextCorrelativo(): Promise<string> {
   const { data, error } = await supabase
@@ -234,6 +247,15 @@ router.post('/', async (req, res) => {
       }
     }
 
+    const serverUser = getUserName(req);
+    if (newOrder.statusHistory && Array.isArray(newOrder.statusHistory)) {
+      newOrder.statusHistory.forEach((h: any) => {
+        if (!h.changedBy || h.changedBy === 'Usuario Actual' || h.changedBy === 'Desconocido' || h.changedBy === 'Usuario') {
+          h.changedBy = serverUser;
+        }
+      });
+    }
+
     const { data, error } = await supabase.from('orders').insert({
       id: newOrder.id,
       cliente: newOrder.order.cliente,
@@ -269,6 +291,7 @@ router.put('/:id/status', async (req, res) => {
   const { id } = req.params;
   const { status, historyItem, cxcNote, factNote, rejectReason } = req.body;
   const userRole = getUserRole(req);
+  const serverUser = getUserName(req);
   
   // Validación de Roles en el Backend:
   if (status === 'PENDIENTE_FACTURACION') {
@@ -296,6 +319,9 @@ router.put('/:id/status', async (req, res) => {
 
     const newHistory = existingData.status_history || [];
     if (historyItem) {
+      if (!historyItem.changedBy || historyItem.changedBy === 'Usuario Actual' || historyItem.changedBy === 'Desconocido' || historyItem.changedBy === 'Usuario') {
+        historyItem.changedBy = serverUser;
+      }
       newHistory.push(historyItem);
     }
 
@@ -345,9 +371,13 @@ router.put('/:id', async (req, res) => {
       });
     }
 
+    const serverUser = getUserName(req);
     const updatedHistory = existingData.status_history ? [...existingData.status_history] : [];
     if (historyItem) {
-       updatedHistory.push(historyItem);
+      if (!historyItem.changedBy || historyItem.changedBy === 'Usuario Actual' || historyItem.changedBy === 'Desconocido' || historyItem.changedBy === 'Usuario') {
+        historyItem.changedBy = serverUser;
+      }
+      updatedHistory.push(historyItem);
     }
 
     // Si viene de Sala de Espera ('POR_VALIDAR') y pasa a 'PENDIENTE_CXC', asignamos correlativo consecutivo

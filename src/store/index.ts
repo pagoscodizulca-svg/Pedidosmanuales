@@ -1,6 +1,40 @@
 import { apiFetch } from '../utils/api';
 import { create } from 'zustand';
 import { DbOrder, OrderData, OrderStatus } from '../types.js';
+import { useAuthStore } from './auth';
+
+function getCurrentUserActor(): { username: string; department: string } {
+  const user = useAuthStore.getState().user;
+  let username = user?.username?.trim();
+  let role = user?.role;
+
+  if (!username) {
+    try {
+      const raw = localStorage.getItem('codizulca-session') || localStorage.getItem('auth-storage');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const u = parsed.state?.user || parsed.user;
+        if (u?.username) {
+          username = u.username.trim();
+          role = u.role;
+        }
+      }
+    } catch {}
+  }
+
+  const roleToDept: Record<string, string> = {
+    ventas: 'Ventas',
+    cxc: 'Cuentas por Cobrar',
+    facturacion: 'Facturación',
+    gerencia: 'Gerencia',
+    master: 'Master',
+  };
+
+  return {
+    username: username || 'Usuario',
+    department: (role && roleToDept[role]) || 'Ventas',
+  };
+}
 
 interface AppState {
   orders: DbOrder[];
@@ -49,21 +83,20 @@ export const useAppStore = create<AppState>((set, get) => ({
   createOrder: async (orderData) => {
     set({ loading: true, error: null });
     try {
+      const { username, department } = getCurrentUserActor();
       const newOrder: Omit<DbOrder, 'id' | 'statusHistory'> = {
         status: 'PENDIENTE_CXC',
         order: orderData,
         createdAt: new Date().toISOString(),
       };
-      // We also need id, which server handles, wait server doesn't handle ID right now
-      // Let's ensure we generate ID on frontend or backend
       
       const response = await apiFetch('/api/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...newOrder, id: crypto.randomUUID(), statusHistory: [{
           status: 'CREADO',
-          department: 'Ventas',
-          changedBy: 'Usuario Actual', // TODO: Get from auth
+          department,
+          changedBy: username,
           timestamp: new Date().toISOString()
         }]})
       });
@@ -84,19 +117,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   
   updateFullOrder: async (id, orderData, newStatus) => {
     try {
-       const userStr = localStorage.getItem('auth-storage');
-       let changedBy = 'Desconocido';
-       let department = 'Ventas';
-       if (userStr) {
-          const u = JSON.parse(userStr);
-          changedBy = u.state?.user?.username || changedBy;
-          department = u.state?.user?.role === 'cxc' ? 'Cuentas por Cobrar' : u.state?.user?.role === 'facturacion' ? 'Facturacin' : 'Ventas';
-       }
+       const { username, department } = getCurrentUserActor();
 
        const historyItem = newStatus ? {
           status: newStatus,
           department,
-          changedBy,
+          changedBy: username,
           timestamp: new Date().toISOString(),
           reason: 'Validado y actualizado'
        } : undefined;
@@ -115,6 +141,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   updateOrderStatus: async (id, status, cxcNote, factNote, rejectReason, departmentParam) => {
     try {
+      const { username, department: defaultDept } = getCurrentUserActor();
       // Determine department if not passed explicitly
       let dept = departmentParam;
       if (!dept) {
@@ -124,14 +151,14 @@ export const useAppStore = create<AppState>((set, get) => ({
         else if (status === 'RECHAZADO') {
            dept = currentOrder?.status === 'PENDIENTE_CXC' ? 'Cuentas por Cobrar' : 'Facturación';
         } else {
-           dept = 'Sistema';
+           dept = defaultDept || 'Sistema';
         }
       }
 
       const historyItem = {
         status,
         department: dept,
-        changedBy: 'Usuario Actual',
+        changedBy: username,
         timestamp: new Date().toISOString(),
         reason: rejectReason
       };
