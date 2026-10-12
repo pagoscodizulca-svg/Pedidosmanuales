@@ -15,8 +15,8 @@ export const OrderModal: React.FC<OrderModalProps> = ({ order, onClose }) => {
   const { user } = useAuthStore();
   const isVentas = user?.role === 'ventas' || user?.role === 'gerencia' || user?.role === 'master';
   
-  // Regla estricta: solo se puede editar si está POR_VALIDAR y el usuario pertenece a Ventas/Gerencia/Master
-  const isEditing = order.status === 'POR_VALIDAR' && isVentas;
+  // Regla estricta: solo se puede editar si el usuario pertenece a Ventas/Gerencia/Master y el pedido no está completado ni rechazado
+  const isEditing = isVentas && order.status !== 'COMPLETADO' && order.status !== 'RECHAZADO';
   const [draft, setDraft] = React.useState<OrderData>(order.order);
   const { updateFullOrder } = useAppStore();
   const [saving, setSaving] = React.useState(false);
@@ -28,6 +28,14 @@ export const OrderModal: React.FC<OrderModalProps> = ({ order, onClose }) => {
     }
     setSaving(true);
     await updateFullOrder(order.id, draft, 'PENDIENTE_CXC');
+    setSaving(false);
+    onClose();
+  };
+
+  const handleSaveEdit = async () => {
+    if (!isVentas) return;
+    setSaving(true);
+    await updateFullOrder(order.id, draft);
     setSaving(false);
     onClose();
   };
@@ -146,7 +154,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({ order, onClose }) => {
             >
               Cerrar
             </button>
-            {order.status === 'POR_VALIDAR' && (
+            {order.status === 'POR_VALIDAR' ? (
               <button 
                 onClick={handleSaveAndSend}
                 disabled={saving}
@@ -154,7 +162,15 @@ export const OrderModal: React.FC<OrderModalProps> = ({ order, onClose }) => {
               >
                 {saving ? 'Guardando...' : 'Aprobar y Enviar a CxC'}
               </button>
-            )}
+            ) : isEditing ? (
+              <button 
+                onClick={handleSaveEdit}
+                disabled={saving}
+                className="px-6 py-2.5 bg-codizulca-cyan hover:bg-cyan-400 text-slate-800 font-black rounded-lg transition-colors text-sm flex items-center gap-2"
+              >
+                {saving ? 'Guardando...' : 'Guardar Cambios'}
+              </button>
+            ) : null}
           </div>
         </div>
       </div>

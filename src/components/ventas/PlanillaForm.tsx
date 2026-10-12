@@ -75,8 +75,17 @@ export const PlanillaForm: React.FC<PlanillaFormProps> = ({ value, onChange, nex
   const handleIdClienteChange = (raw: string) => {
     const val = raw.toUpperCase();
     const clean = val.trim();
-    const padded = clean ? clean.padStart(6, '0') : '';
-    const found = CLIENTES.find((c) => c.id_cliente === clean || c.id_cliente === padded);
+    const isNum = /^\d+$/.test(clean);
+    const padded = isNum ? clean.padStart(6, '0') : clean;
+    const numVal = isNum ? parseInt(clean, 10) : NaN;
+
+    // Buscar si coincide por código exacto, por código con 6 ceros, o por valor numérico
+    const found = clean.length > 0 ? CLIENTES.find(
+      (c) =>
+        c.id_cliente === clean ||
+        c.id_cliente === padded ||
+        (!isNaN(numVal) && parseInt(c.id_cliente, 10) === numVal && clean.length >= String(numVal).length)
+    ) : undefined;
 
     if (found) {
       set({
@@ -92,15 +101,24 @@ export const PlanillaForm: React.FC<PlanillaFormProps> = ({ value, onChange, nex
   const handleIdClienteBlur = () => {
     const raw = (value.id_cliente || '').trim();
     if (!raw) return;
-    const padded = raw.padStart(6, '0');
-    const found = CLIENTES.find((c) => c.id_cliente === raw || c.id_cliente === padded);
+    const isNum = /^\d+$/.test(raw);
+    const padded = isNum ? raw.padStart(6, '0') : raw;
+    const numVal = isNum ? parseInt(raw, 10) : NaN;
+
+    const found = CLIENTES.find(
+      (c) =>
+        c.id_cliente === raw ||
+        c.id_cliente === padded ||
+        (!isNaN(numVal) && parseInt(c.id_cliente, 10) === numVal)
+    );
+
     if (found) {
       set({
         id_cliente: found.id_cliente,
         cliente: found.nombre,
         ruta: found.vendedor || value.ruta,
       });
-    } else if (raw.length < 6 && /^\d+$/.test(raw)) {
+    } else if (isNum && raw.length < 6) {
       set({ id_cliente: padded });
     }
   };
@@ -123,28 +141,74 @@ export const PlanillaForm: React.FC<PlanillaFormProps> = ({ value, onChange, nex
   // Auto-completar descripción al ingresar Código de producto
   const handleItemCodigoChange = (idx: number, raw: string) => {
     const clean = raw.trim();
-    const padded = clean ? clean.padStart(6, '0') : '';
-    const found = PRODUCTOS.find((p) => p.id === clean || p.id === padded);
+    const isNum = /^\d+$/.test(clean);
+    const padded = isNum ? clean.padStart(6, '0') : clean;
+    const numVal = isNum ? parseInt(clean, 10) : NaN;
+
+    const found = clean.length > 0 ? PRODUCTOS.find(
+      (p) =>
+        p.id === clean ||
+        p.id === padded ||
+        (!isNaN(numVal) && parseInt(p.id, 10) === numVal && clean.length >= String(numVal).length)
+    ) : undefined;
+
+    const arts = [...value.articulos];
     if (found) {
-      const arts = [...value.articulos];
-      arts[idx] = { ...arts[idx], codigo: raw, descripcion: found.descripcion };
-      onChange({ ...value, articulos: arts });
+      arts[idx] = { 
+        ...arts[idx], 
+        codigo: raw, 
+        descripcion: found.descripcion 
+      };
     } else {
-      setRow(idx, 'codigo', raw);
+      arts[idx] = { ...arts[idx], codigo: raw };
     }
+    arts[idx].sub_total = round2((Number(arts[idx].cantidad_solicitada) || 0) * (Number(arts[idx].precio_unitario) || 0));
+    const total = calcTotal(arts);
+    onChange({ ...value, articulos: arts, total_pedido: total, monto_pedido: total });
+  };
+
+  const handleItemCodigoBlur = (idx: number) => {
+    const raw = (value.articulos[idx]?.codigo || '').trim();
+    if (!raw) return;
+    const isNum = /^\d+$/.test(raw);
+    const padded = isNum ? raw.padStart(6, '0') : raw;
+    const numVal = isNum ? parseInt(raw, 10) : NaN;
+
+    const found = PRODUCTOS.find(
+      (p) =>
+        p.id === raw ||
+        p.id === padded ||
+        (!isNaN(numVal) && parseInt(p.id, 10) === numVal)
+    );
+
+    const arts = [...value.articulos];
+    if (found) {
+      arts[idx] = {
+        ...arts[idx],
+        codigo: found.id,
+        descripcion: found.descripcion,
+      };
+    } else if (isNum && raw.length < 6) {
+      arts[idx] = { ...arts[idx], codigo: padded };
+    }
+    arts[idx].sub_total = round2((Number(arts[idx].cantidad_solicitada) || 0) * (Number(arts[idx].precio_unitario) || 0));
+    const total = calcTotal(arts);
+    onChange({ ...value, articulos: arts, total_pedido: total, monto_pedido: total });
   };
 
   // Auto-completar código al seleccionar o escribir Descripción de producto
   const handleItemDescripcionChange = (idx: number, raw: string) => {
     const upper = raw.toUpperCase();
     const found = PRODUCTOS.find((p) => p.descripcion.toUpperCase() === upper.trim());
+    const arts = [...value.articulos];
     if (found) {
-      const arts = [...value.articulos];
       arts[idx] = { ...arts[idx], descripcion: upper, codigo: found.id };
-      onChange({ ...value, articulos: arts });
     } else {
-      setRow(idx, 'descripcion', upper);
+      arts[idx] = { ...arts[idx], descripcion: upper };
     }
+    arts[idx].sub_total = round2((Number(arts[idx].cantidad_solicitada) || 0) * (Number(arts[idx].precio_unitario) || 0));
+    const total = calcTotal(arts);
+    onChange({ ...value, articulos: arts, total_pedido: total, monto_pedido: total });
   };
 
   const total = calcTotal(value.articulos);
@@ -166,10 +230,26 @@ export const PlanillaForm: React.FC<PlanillaFormProps> = ({ value, onChange, nex
         ))}
       </datalist>
 
+      <datalist id="codigos-clientes-list">
+        {CLIENTES.map((c) => (
+          <option key={c.id_cliente} value={c.id_cliente}>
+            {c.nombre} {c.vendedor ? `(${c.vendedor})` : ''}
+          </option>
+        ))}
+      </datalist>
+
       <datalist id="productos-list">
         {PRODUCTOS.map((p) => (
           <option key={p.id} value={p.descripcion}>
             {p.id}
+          </option>
+        ))}
+      </datalist>
+
+      <datalist id="codigos-productos-list">
+        {PRODUCTOS.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.descripcion}
           </option>
         ))}
       </datalist>
@@ -206,6 +286,7 @@ export const PlanillaForm: React.FC<PlanillaFormProps> = ({ value, onChange, nex
           <div className="flex items-center justify-between gap-2 px-2 py-1 bg-amber-50">
             <span className={labelCls}>ID Cliente:</span>
             <input
+              list="codigos-clientes-list"
               className="w-24 bg-transparent text-xs font-bold text-right uppercase focus:outline-none"
               value={value.id_cliente || ''}
               onChange={(e) => handleIdClienteChange(e.target.value)}
@@ -294,9 +375,14 @@ export const PlanillaForm: React.FC<PlanillaFormProps> = ({ value, onChange, nex
                 </td>
                 <td className="border-r border-slate-800">
                   <input
-                    className={`${cellInput} text-center text-[12px]`}
+                    list="codigos-productos-list"
+                    className={`${cellInput} text-center text-[12px] font-bold`}
                     value={item.codigo || ''}
                     onChange={(e) => handleItemCodigoChange(idx, e.target.value)}
+                    onBlur={() => handleItemCodigoBlur(idx)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleItemCodigoBlur(idx);
+                    }}
                   />
                 </td>
                 <td className="border-r border-slate-800">
