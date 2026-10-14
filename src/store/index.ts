@@ -199,8 +199,8 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       const data = await response.json();
       if (data.orders && Array.isArray(data.orders)) {
-        const mapUpdated = new Map(data.orders.map((o: DbOrder) => [o.id, o]));
-        set({ orders: get().orders.map(o => mapUpdated.get(o.id) || o) });
+        const mapUpdated = new Map<string, DbOrder>(data.orders.map((o: DbOrder) => [o.id, o]));
+        set({ orders: get().orders.map(o => (mapUpdated.get(o.id) || o) as DbOrder) });
       } else {
         await get().fetchOrders();
       }
