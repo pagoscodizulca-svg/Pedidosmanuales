@@ -46,6 +46,7 @@ interface AppState {
   createOrder: (order: OrderData) => Promise<DbOrder>;
   updateFullOrder: (id: string, orderData: OrderData, newStatus?: OrderStatus) => Promise<void>;
   updateOrderStatus: (id: string, status: OrderStatus, cxcNote?: string, factNote?: string, rejectReason?: string, departmentParam?: string) => Promise<void>;
+  updateBatchOrderStatus: (ids: string[], status: OrderStatus, department?: string) => Promise<void>;
   updateSupervisor: (id: string, supervisor: string) => Promise<void>;
   parseOrderWithAI: (text: string) => Promise<Partial<OrderData>>;
 }
@@ -172,6 +173,37 @@ export const useAppStore = create<AppState>((set, get) => ({
       
       const updated = await response.json();
       set({ orders: get().orders.map(o => o.id === id ? updated : o) });
+    } catch (err: any) {
+      set({ error: err.message });
+      throw err;
+    }
+  },
+
+  updateBatchOrderStatus: async (ids, status, departmentParam) => {
+    try {
+      const { department: defaultDept } = getCurrentUserActor();
+      let dept = departmentParam;
+      if (!dept) {
+        if (status === 'PENDIENTE_FACTURACION') dept = 'Cuentas por Cobrar';
+        else if (status === 'COMPLETADO') dept = 'Facturación';
+        else dept = defaultDept || 'Sistema';
+      }
+
+      const response = await apiFetch('/api/orders/batch-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids, status, department: dept })
+      });
+
+      if (!response.ok) throw new Error('Error al actualizar pedidos en lote');
+
+      const data = await response.json();
+      if (data.orders && Array.isArray(data.orders)) {
+        const mapUpdated = new Map(data.orders.map((o: DbOrder) => [o.id, o]));
+        set({ orders: get().orders.map(o => mapUpdated.get(o.id) || o) });
+      } else {
+        await get().fetchOrders();
+      }
     } catch (err: any) {
       set({ error: err.message });
       throw err;

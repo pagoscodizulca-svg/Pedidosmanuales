@@ -1,17 +1,24 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { ShoppingCart, DollarSign, FileText, Activity, Archive } from 'lucide-react';
 import { useAppStore } from '../../store/index';
 import { useAuthStore } from '../../store/auth';
-import { ChatBot } from '../shared/ChatBot';
 
 export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { orders } = useAppStore();
   const { user, logout } = useAuthStore();
   const location = useLocation();
 
-  const kpiPendienteCXC = orders.filter(o => o.status === 'PENDIENTE_CXC' && !o.isArchived).length;
-  const kpiPendienteFact = orders.filter(o => o.status === 'PENDIENTE_FACTURACION' && !o.isArchived).length;
+  const { kpiPendienteCXC, kpiPendienteFact } = useMemo(() => {
+    let cxc = 0;
+    let fact = 0;
+    for (const o of orders) {
+      if (o.isArchived) continue;
+      if (o.status === 'PENDIENTE_CXC') cxc++;
+      else if (o.status === 'PENDIENTE_FACTURACION') fact++;
+    }
+    return { kpiPendienteCXC: cxc, kpiPendienteFact: fact };
+  }, [orders]);
 
     const allNavItems = [
     { path: '/', label: 'Ventas', icon: <ShoppingCart size={20} />, roles: ['ventas', 'master', 'gerencia'] },
@@ -87,7 +94,6 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
           </div>
         </div>
       </main>
-      <ChatBot />
     </div>
   );
 };

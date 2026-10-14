@@ -354,7 +354,7 @@ router.put('/:id/status', async (req, res) => {
       .from('orders')
       .update(updatePayload)
       .eq('id', id)
-      .select()
+      .select(ACTIVE_ORDERS_COLUMNS)
       .single();
 
     if (error) throw error;
@@ -362,6 +362,74 @@ router.put('/:id/status', async (req, res) => {
     res.json(mapSupabaseToDbOrder(data));
   } catch (err: any) {
     console.error('Error updating Supabase:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/orders/batch-status (actualización masiva concurrente en lote para máxima velocidad)
+router.post('/batch-status', async (req, res) => {
+  const { ids, status, department: reqDept } = req.body;
+  const userRole = getUserRole(req);
+  const serverUser = getUserName(req);
+
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'Lista de IDs requerida' });
+  }
+
+  // Validación de Roles en el Backend:
+  if (status === 'PENDIENTE_FACTURACION') {
+    if (!['cxc', 'gerencia', 'master'].includes(userRole)) {
+      return res.status(403).json({ error: 'Acceso denegado: Solo Cuentas por Cobrar puede aprobar a Facturación.' });
+    }
+  } else if (status === 'COMPLETADO') {
+    if (!['facturacion', 'gerencia', 'master'].includes(userRole)) {
+      return res.status(403).json({ error: 'Acceso denegado: Solo Facturación puede completar pedidos.' });
+    }
+  } else if (status === 'RECHAZADO') {
+    if (!['cxc', 'facturacion', 'gerencia', 'master'].includes(userRole)) {
+      return res.status(403).json({ error: 'Acceso denegado: No tiene permisos para rechazar pedidos.' });
+    }
+  }
+
+  const dept = reqDept || (status === 'COMPLETADO' ? 'Facturación' : status === 'PENDIENTE_FACTURACION' ? 'Cuentas por Cobrar' : 'Sistema');
+
+  try {
+    const { data: existingRows, error: fetchErr } = await supabase
+      .from('orders')
+      .select('id, status_history')
+      .in('id', ids);
+
+    if (fetchErr) throw fetchErr;
+
+    const nowIso = new Date().toISOString();
+
+    const updatePromises = (existingRows || []).map(async (row) => {
+      const history = Array.isArray(row.status_history) ? [...row.status_history] : [];
+      history.push({
+        status,
+        department: dept,
+        changedBy: serverUser,
+        timestamp: nowIso
+      });
+
+      return supabase
+        .from('orders')
+        .update({
+          status,
+          status_history: history,
+          updated_at: nowIso
+        })
+        .eq('id', row.id)
+        .select(ACTIVE_ORDERS_COLUMNS)
+        .single();
+    });
+
+    const results = await Promise.all(updatePromises);
+    const updatedOrders = results.filter(r => r.data && !r.error).map(r => mapSupabaseToDbOrder(r.data));
+
+    res.json({ success: true, count: updatedOrders.length, orders: updatedOrders });
+  } catch (err: any) {
+    console.error('Error in batch status update:', err);
     res.status(500).json({ error: err.message });
   }
 });

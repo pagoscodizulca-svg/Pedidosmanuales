@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useAppStore } from '../store/index.js';
 import { DbOrder } from '../types.js';
-import { PackageCheck, PackageX, RotateCcw, Search, User, MapPin, Hash, Calendar, FileText, CheckSquare, Eye, Printer, X } from 'lucide-react';
+import { PackageCheck, PackageX, RotateCcw, Search, User, MapPin, Hash, Calendar, FileText, CheckSquare, Eye, Printer, X, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
 import { SeguimientoBlock } from '../components/shared/SeguimientoBlock';
 import { OrderModal } from '../components/shared/OrderModal';
 import { InlineNoteForm } from '../components/shared/InlineNoteForm';
@@ -20,12 +20,19 @@ const MOTIVOS_RECHAZO = [
 
 // Un pedido rechazado pertenece a Facturación si el último evento de rechazo vino de ese departamento
 const rechazadoPorFacturacion = (o: DbOrder) => {
-  const last = [...(o.statusHistory || [])].reverse().find(h => h.status === 'RECHAZADO');
-  return last?.department === 'Facturación';
+  const history = o.statusHistory || [];
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].status === 'RECHAZADO') {
+      return history[i].department === 'Facturación';
+    }
+  }
+  return false;
 };
 
+const PAGE_SIZE = 30;
+
 export const Facturacion: React.FC = () => {
-  const { orders, fetchOrders, updateOrderStatus, loading } = useAppStore();
+  const { orders, fetchOrders, updateOrderStatus, updateBatchOrderStatus, loading } = useAppStore();
 
   // Tabs & Filters
   const [activeTab, setActiveTab] = useState<Tab>('POR_FACTURAR');
@@ -39,19 +46,40 @@ export const Facturacion: React.FC = () => {
     vendedor: '', zona: '', cliente: '', correlativo: '', dateFrom: '', dateTo: ''
   });
 
-  // Selection & Modals
+  // Selection & Modals & Loading
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [viewOrder, setViewOrder] = useState<DbOrder | null>(null);
   const [rejectTarget, setRejectTarget] = useState<string | null>(null);
+  const [processingId, setProcessingId] = useState<string | null>(null);
+  const [batchProcessing, setBatchProcessing] = useState(false);
+  const [displayCount, setDisplayCount] = useState(PAGE_SIZE);
+  const [showSeguimiento, setShowSeguimiento] = useState(false);
 
   useEffect(() => {
     fetchOrders();
   }, [fetchOrders]);
 
-  // KPIs (globales del módulo)
-  const kpiPorFacturar = orders.filter(o => o.status === 'PENDIENTE_FACTURACION' && !o.isArchived).length;
-  const kpiFacturados = orders.filter(o => o.status === 'COMPLETADO' && !o.isArchived).length;
-  const kpiRechazados = orders.filter(o => o.status === 'RECHAZADO' && !o.isArchived && rechazadoPorFacturacion(o)).length;
+  // Reset del límite visible al cambiar de pestaña o filtros
+  useEffect(() => {
+    setDisplayCount(PAGE_SIZE);
+  }, [activeTab, appliedFilters]);
+
+  // KPIs calculados en una sola pasada eficiente (O(N)) memoizada
+  const { kpiPorFacturar, kpiFacturados, kpiRechazados } = useMemo(() => {
+    let porFacturar = 0;
+    let facturados = 0;
+    let rechazados = 0;
+
+    for (let i = 0; i < orders.length; i++) {
+      const o = orders[i];
+      if (o.isArchived) continue;
+      if (o.status === 'PENDIENTE_FACTURACION') porFacturar++;
+      else if (o.status === 'COMPLETADO') facturados++;
+      else if (o.status === 'RECHAZADO' && rechazadoPorFacturacion(o)) rechazados++;
+    }
+
+    return { kpiPorFacturar: porFacturar, kpiFacturados: facturados, kpiRechazados: rechazados };
+  }, [orders]);
 
   const ejecutarBusqueda = () =>
     setAppliedFilters({ vendedor: filterVendedor, zona: filterZona, cliente: filterCliente, correlativo: filterCorrelativo, dateFrom, dateTo });
@@ -106,14 +134,29 @@ export const Facturacion: React.FC = () => {
     }).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }, [orders, activeTab, appliedFilters]);
 
-  // Actions
+  // Lista visible recortada a displayCount para renderizado instantáneo
+  const visibleOrders = useMemo(() => {
+    return filteredOrders.slice(0, displayCount);
+  }, [filteredOrders, displayCount]);
+
+  // Actions con respuesta visual inmediata
   const handleFacturar = async (id: string) => {
-    await updateOrderStatus(id, 'COMPLETADO');
+    setProcessingId(id);
+    try {
+      await updateOrderStatus(id, 'COMPLETADO');
+    } finally {
+      setProcessingId(null);
+    }
   };
 
   const handleDesmarcar = async (id: string) => {
     if (confirm('¿Deshacer y devolver el pedido a POR FACTURAR?')) {
-      await updateOrderStatus(id, 'PENDIENTE_FACTURACION');
+      setProcessingId(id);
+      try {
+        await updateOrderStatus(id, 'PENDIENTE_FACTURACION');
+      } finally {
+        setProcessingId(null);
+      }
     }
   };
 
@@ -124,8 +167,13 @@ export const Facturacion: React.FC = () => {
 
   const confirmReject = async (reason: string) => {
     if (!rejectTarget) return;
-    await updateOrderStatus(rejectTarget, 'RECHAZADO', undefined, undefined, reason, 'Facturación');
-    setRejectTarget(null);
+    setProcessingId(rejectTarget);
+    try {
+      await updateOrderStatus(rejectTarget, 'RECHAZADO', undefined, undefined, reason, 'Facturación');
+    } finally {
+      setProcessingId(null);
+      setRejectTarget(null);
+    }
   };
 
   const [expandedNoteId, setExpandedNoteId] = useState<string | null>(null);
@@ -146,10 +194,13 @@ export const Facturacion: React.FC = () => {
   const handleFacturarLote = async () => {
     if (selectedIds.size === 0) return;
     if (confirm(`¿Facturar ${selectedIds.size} pedidos seleccionados?`)) {
-      for (const id of selectedIds) {
-        await updateOrderStatus(id, 'COMPLETADO');
+      setBatchProcessing(true);
+      try {
+        await updateBatchOrderStatus(Array.from(selectedIds), 'COMPLETADO', 'Facturación');
+        setSelectedIds(new Set());
+      } finally {
+        setBatchProcessing(false);
       }
-      setSelectedIds(new Set());
     }
   };
 
@@ -300,9 +351,18 @@ export const Facturacion: React.FC = () => {
             {activeTab === 'POR_FACTURAR' && selectedIds.size > 0 && (
               <button
                 onClick={handleFacturarLote}
-                className="flex items-center gap-2 bg-codizulca-cyan hover:bg-cyan-700 text-white px-4 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm"
+                disabled={batchProcessing}
+                className="flex items-center gap-2 bg-codizulca-cyan hover:bg-cyan-700 text-white px-4 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm disabled:opacity-50"
               >
-                <CheckSquare size={14} /> Facturar Lote ({selectedIds.size})
+                {batchProcessing ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" /> Facturando...
+                  </>
+                ) : (
+                  <>
+                    <CheckSquare size={14} /> Facturar Lote ({selectedIds.size})
+                  </>
+                )}
               </button>
             )}
             <button
@@ -325,9 +385,10 @@ export const Facturacion: React.FC = () => {
           </div>
         ) : (
           <div className="space-y-4">
-            {filteredOrders.map(o => {
-              const arts = o.order.articulos.filter(a => a.descripcion || a.cantidad_solicitada > 0);
+            {visibleOrders.map(o => {
+              const arts = (o.order?.articulos || []).filter(a => a?.descripcion || Number(a?.cantidad_solicitada) > 0);
               const isSelected = selectedIds.has(o.id);
+              const isProcessing = processingId === o.id;
 
               return (
                 <div key={o.id} className={`bg-white rounded-xl border ${isSelected ? 'border-codizulca-cyan ring-1 ring-cyan-100' : 'border-slate-200'} shadow-sm overflow-hidden transition-all p-4`}>
@@ -344,27 +405,27 @@ export const Facturacion: React.FC = () => {
                       <div>
                         {/* Top Row: Name & Tags */}
                         <div className="flex flex-wrap items-center gap-2 mb-1">
-                          <h3 className="text-lg font-extrabold text-slate-900 uppercase">{o.order.cliente}</h3>
-                          {o.order.id_cliente && (
+                          <h3 className="text-lg font-extrabold text-slate-900 uppercase">{o.order?.cliente || 'SIN CLIENTE'}</h3>
+                          {o.order?.id_cliente && (
                             <span className="bg-slate-50 border border-slate-200 text-slate-500 text-[10px] font-bold px-1.5 py-0.5 rounded">ID: {o.order.id_cliente}</span>
                           )}
-                          <span className="bg-red-50 border border-red-100 text-codizulca-red text-[10px] font-bold px-1.5 py-0.5 rounded">Pedido #{o.order.numero_pedido}</span>
+                          <span className="bg-red-50 border border-red-100 text-codizulca-red text-[10px] font-bold px-1.5 py-0.5 rounded">Pedido #{o.order?.numero_pedido || '-'}</span>
                           <span className="bg-slate-50 border border-slate-200 text-slate-700 text-[10px] font-bold px-1.5 py-0.5 rounded">
                             {activeTab === 'POR_FACTURAR' ? 'Por Facturar' : activeTab === 'FACTURADOS' ? 'Facturado' : 'Rechazado'}
                           </span>
                         </div>
                         {/* Second Row: Stats */}
                         <div className="text-xs text-slate-600 flex flex-wrap items-center gap-2 font-medium mb-1">
-                          <span className="text-sm font-extrabold text-slate-900">${(o.order.total_pedido || 0).toFixed(2)}</span>
+                          <span className="text-sm font-extrabold text-slate-900">${Number(o.order?.total_pedido || 0).toFixed(2)}</span>
                           <span>•</span>
-                          <span>Fecha: {o.order.fecha}</span>
+                          <span>Fecha: {o.order?.fecha || '-'}</span>
                           <span>•</span>
                           <span>Artículos: {arts.length}</span>
                           <span>•</span>
                         </div>
                         {/* Third Row: Vendedor */}
                         <div className="text-xs text-slate-800 font-extrabold uppercase">
-                          Vendedor: {o.order.ruta || 'N/A'}
+                          Vendedor: {o.order?.ruta || 'N/A'}
                         </div>
                       </div>
                     </div>
@@ -382,15 +443,23 @@ export const Facturacion: React.FC = () => {
                         <>
                           <button
                             onClick={() => openReject(o.id)}
-                            className="flex items-center gap-1.5 px-4 py-1.5 border border-codizulca-red text-codizulca-red hover:bg-red-50 rounded-lg text-[11px] font-bold transition-colors shadow-sm"
+                            disabled={isProcessing}
+                            className="flex items-center gap-1.5 px-4 py-1.5 border border-codizulca-red text-codizulca-red hover:bg-red-50 rounded-lg text-[11px] font-bold transition-colors shadow-sm disabled:opacity-50"
                           >
                             <X size={12} /> No facturado
                           </button>
                           <button
                             onClick={() => handleFacturar(o.id)}
-                            className="px-5 py-1.5 bg-slate-900 hover:bg-black text-white rounded-lg text-[11px] font-bold transition-colors shadow-sm"
+                            disabled={isProcessing}
+                            className="px-5 py-1.5 bg-slate-900 hover:bg-black text-white rounded-lg text-[11px] font-bold transition-colors shadow-sm disabled:opacity-50 flex items-center gap-1.5"
                           >
-                            Facturado
+                            {isProcessing ? (
+                              <>
+                                <Loader2 size={12} className="animate-spin" /> Facturando...
+                              </>
+                            ) : (
+                              'Facturado'
+                            )}
                           </button>
                         </>
                       )}
@@ -398,9 +467,10 @@ export const Facturacion: React.FC = () => {
                       {activeTab === 'FACTURADOS' && (
                         <button
                           onClick={() => handleDesmarcar(o.id)}
-                          className="flex items-center gap-1.5 px-4 py-1.5 border border-orange-300 text-orange-600 hover:bg-orange-50 rounded-lg text-[11px] font-bold transition-colors shadow-sm"
+                          disabled={isProcessing}
+                          className="flex items-center gap-1.5 px-4 py-1.5 border border-orange-300 text-orange-600 hover:bg-orange-50 rounded-lg text-[11px] font-bold transition-colors shadow-sm disabled:opacity-50"
                         >
-                          <RotateCcw size={12} /> Deshacer
+                          {isProcessing ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />} Deshacer
                         </button>
                       )}
 
@@ -484,12 +554,56 @@ export const Facturacion: React.FC = () => {
                 </div>
               );
             })}
+
+            {filteredOrders.length > displayCount && (
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-4 bg-white border border-slate-200 rounded-xl shadow-sm text-xs">
+                <span className="text-slate-500 font-medium">
+                  Mostrando <strong className="text-slate-800">{visibleOrders.length}</strong> de <strong className="text-slate-800">{filteredOrders.length}</strong> pedidos
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setDisplayCount(prev => prev + PAGE_SIZE)}
+                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-lg transition"
+                  >
+                    Cargar 30 más
+                  </button>
+                  <button
+                    onClick={() => setDisplayCount(filteredOrders.length)}
+                    className="px-4 py-2 bg-codizulca-cyan hover:bg-cyan-500 text-slate-900 font-bold rounded-lg transition"
+                  >
+                    Mostrar todos ({filteredOrders.length})
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
 
-      <div className="mt-12 pt-8 border-t border-slate-200">
-        <SeguimientoBlock orders={orders} />
+      <div className="mt-8 pt-6 border-t border-slate-200">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+          <div>
+            <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide">
+              Seguimiento Global y Auditoría de Estados
+            </h3>
+            <p className="text-xs text-slate-500">Consulta el estatus detallado de todos los pedidos en tiempo real.</p>
+          </div>
+          <button
+            onClick={() => setShowSeguimiento(prev => !prev)}
+            className="text-xs font-bold px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 rounded-lg text-slate-700 shadow-sm transition flex items-center justify-center gap-1.5 self-start sm:self-auto"
+          >
+            {showSeguimiento ? (
+              <>
+                <ChevronUp size={14} /> Ocultar Seguimiento Global
+              </>
+            ) : (
+              <>
+                <ChevronDown size={14} /> Mostrar Seguimiento Global
+              </>
+            )}
+          </button>
+        </div>
+        {showSeguimiento && <SeguimientoBlock orders={orders} />}
       </div>
 
       {viewOrder && <OrderModal order={viewOrder} onClose={() => setViewOrder(null)} />}
