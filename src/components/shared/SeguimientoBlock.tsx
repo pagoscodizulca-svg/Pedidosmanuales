@@ -26,31 +26,33 @@ export const SeguimientoBlock: React.FC<SeguimientoBlockProps> = ({ orders, hide
     if (activeFilterTab === 'LISTOS' && o.status !== 'COMPLETADO') return false;
     if (activeFilterTab === 'RECHAZADOS' && o.status !== 'RECHAZADO') return false;
 
+    const ord = o.order || ({} as any);
+
     // Search Term (Cliente o ID)
     if (searchTerm) {
       const q = searchTerm.toLowerCase();
-      const matchClient = String(o.order.cliente || '').toLowerCase().includes(q);
-      const matchId = String(o.order.id_cliente || '').toLowerCase().includes(q);
+      const matchClient = String(ord.cliente || '').toLowerCase().includes(q);
+      const matchId = String(ord.id_cliente || '').toLowerCase().includes(q);
       if (!matchClient && !matchId) return false;
     }
 
     // Correlativo(s)
     if (correlativoTerm) {
       const terms = correlativoTerm.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
-      const numPed = String(o.order.numero_pedido || '').toLowerCase();
+      const numPed = String(ord.numero_pedido || '').toLowerCase();
       const matchNum = terms.some(t => numPed.includes(t));
       if (!matchNum) return false;
     }
 
     // Seller
     if (sellerTerm) {
-      const ruta = String(o.order.ruta || '').toLowerCase();
+      const ruta = String(ord.ruta || '').toLowerCase();
       if (!ruta.includes(sellerTerm.toLowerCase())) return false;
     }
 
     // Dates
-    if (dateFrom && o.order.fecha < dateFrom) return false;
-    if (dateTo && o.order.fecha > dateTo) return false;
+    if (dateFrom && (ord.fecha || '') < dateFrom) return false;
+    if (dateTo && (ord.fecha || '') > dateTo) return false;
 
     return true;
   }).sort((a, b) => b.createdAt.localeCompare(a.createdAt)); // Newest first

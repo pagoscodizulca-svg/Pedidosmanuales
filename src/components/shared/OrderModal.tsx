@@ -3,7 +3,7 @@ import { X, Printer, User } from 'lucide-react';
 import { DbOrder, OrderData } from '../../types';
 import { useAppStore } from '../../store/index';
 import { useAuthStore } from '../../store/auth';
-import { PlanillaForm } from '../ventas/PlanillaForm';
+import { PlanillaForm, padRows } from '../ventas/PlanillaForm';
 import { printOrder } from '../../lib/pdfUtils';
 
 interface OrderModalProps {
@@ -17,7 +17,39 @@ export const OrderModal: React.FC<OrderModalProps> = ({ order, onClose }) => {
   
   // Regla estricta: solo se puede editar si el usuario pertenece a Ventas/Gerencia/Master y el pedido no está completado ni rechazado
   const isEditing = isVentas && order.status !== 'COMPLETADO' && order.status !== 'RECHAZADO';
-  const [draft, setDraft] = React.useState<OrderData>(order.order);
+  
+  const ord = order?.order || ({} as any);
+  const [draft, setDraft] = React.useState<OrderData>(() => ({
+    cliente: ord.cliente || '',
+    id_cliente: ord.id_cliente || '',
+    ruta: ord.ruta || '',
+    supervisor: ord.supervisor || '',
+    chofer: ord.chofer || '',
+    observaciones: ord.observaciones || '',
+    fecha: ord.fecha || '',
+    numero_pedido: ord.numero_pedido || '',
+    total_pedido: Number(ord.total_pedido || ord.monto_pedido || 0),
+    monto_pedido: Number(ord.total_pedido || ord.monto_pedido || 0),
+    articulos: padRows(ord.articulos || []),
+  }));
+
+  React.useEffect(() => {
+    const currentOrd = order?.order || ({} as any);
+    setDraft({
+      cliente: currentOrd.cliente || '',
+      id_cliente: currentOrd.id_cliente || '',
+      ruta: currentOrd.ruta || '',
+      supervisor: currentOrd.supervisor || '',
+      chofer: currentOrd.chofer || '',
+      observaciones: currentOrd.observaciones || '',
+      fecha: currentOrd.fecha || '',
+      numero_pedido: currentOrd.numero_pedido || '',
+      total_pedido: Number(currentOrd.total_pedido || currentOrd.monto_pedido || 0),
+      monto_pedido: Number(currentOrd.total_pedido || currentOrd.monto_pedido || 0),
+      articulos: padRows(currentOrd.articulos || []),
+    });
+  }, [order]);
+
   const { updateFullOrder } = useAppStore();
   const [saving, setSaving] = React.useState(false);
 
@@ -39,6 +71,11 @@ export const OrderModal: React.FC<OrderModalProps> = ({ order, onClose }) => {
     setSaving(false);
     onClose();
   };
+
+  const articulosCount = (ord.articulos || []).filter(
+    (a: any) => a?.descripcion || Number(a?.cantidad_solicitada) > 0
+  ).length;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden">
@@ -52,7 +89,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({ order, onClose }) => {
               order.status === 'RECHAZADO' ? 'bg-red-100 text-red-800' :
               'bg-amber-100 text-amber-800'
             }`}>
-              {order.status.replace('_', ' ')}
+              {(order.status || '').replace('_', ' ')}
             </span>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors rounded-full p-1 hover:bg-slate-200">
@@ -67,26 +104,26 @@ export const OrderModal: React.FC<OrderModalProps> = ({ order, onClose }) => {
           <div className="bg-white rounded-xl border border-slate-200 p-4 flex justify-between items-center shadow-sm">
             <div>
               <h3 className="text-lg font-extrabold text-slate-800 uppercase leading-tight mb-2">
-                {order.order.cliente}
+                {ord.cliente || 'CLIENTE NO DEFINIDO'}
               </h3>
-              <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
+              <div className="flex items-center gap-2 text-xs text-slate-500 font-medium flex-wrap">
                 <span className="bg-red-50 text-codizulca-red px-2 py-0.5 rounded border border-red-100 font-mono">
-                  ID: {order.order.id_cliente || '-'}
+                  ID: {ord.id_cliente || '-'}
                 </span>
                 <span className="bg-red-50 text-codizulca-red px-2 py-0.5 rounded border border-red-100 font-mono">
-                  Pedido #{order.order.numero_pedido}
+                  Pedido #{ord.numero_pedido || '-'}
                 </span>
-                <span>Fecha: {order.order.fecha}</span>
+                <span>Fecha: {ord.fecha || '-'}</span>
                 <span>•</span>
-                <span>Ruta/Vendedor: <strong className="text-slate-700">{order.order.ruta || '-'}</strong></span>
+                <span>Ruta/Vendedor: <strong className="text-slate-700">{ord.ruta || '-'}</strong></span>
                 <span>•</span>
-                <span>Artículos: {order.order.articulos.filter(a => a.descripcion || a.cantidad_solicitada > 0).length}</span>
+                <span>Artículos: {articulosCount}</span>
               </div>
             </div>
             <div className="bg-amber-100/50 border border-amber-200 rounded-lg px-6 py-3 text-right">
               <div className="text-[10px] font-bold text-amber-800 uppercase tracking-wider mb-1">Total a pagar:</div>
               <div className="text-2xl font-extrabold text-slate-800">
-                ${(order.order.total_pedido || 0).toFixed(2)}
+                ${Number(ord.total_pedido || 0).toFixed(2)}
               </div>
             </div>
           </div>
@@ -94,7 +131,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({ order, onClose }) => {
           {/* Formato Planilla (Read Only para CxC y Facturación) */}
           <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm overflow-x-auto">
              <div className={`min-w-[720px] ${!isEditing ? 'pointer-events-none select-none opacity-95' : ''}`}>
-               <PlanillaForm value={draft} onChange={setDraft} nextNumero={order.order.numero_pedido || ''} />
+               <PlanillaForm value={draft} onChange={setDraft} nextNumero={String(ord.numero_pedido || '')} />
              </div>
           </div>
 
@@ -104,10 +141,12 @@ export const OrderModal: React.FC<OrderModalProps> = ({ order, onClose }) => {
               <HistoryIcon /> Historial de Trazabilidad
             </h3>
             <div className="space-y-4">
-              {order.statusHistory.map((h, i) => {
+              {(order.statusHistory || []).map((h, i) => {
                 const userName = (!h.changedBy || h.changedBy === 'Usuario Actual' || h.changedBy === 'Desconocido')
-                  ? (order.order?.supervisor || 'Usuario')
+                  ? (ord.supervisor || 'Usuario')
                   : h.changedBy;
+
+                const timeStr = h.timestamp ? new Date(h.timestamp).toLocaleString('es-VE') : '-';
 
                 return (
                   <div key={i} className="flex items-center justify-between text-sm">
@@ -121,13 +160,13 @@ export const OrderModal: React.FC<OrderModalProps> = ({ order, onClose }) => {
                         h.status === 'RECHAZADO' ? 'bg-red-100 text-red-700' :
                         'bg-cyan-100 text-cyan-800'
                       }`}>
-                        {h.status.replace('_', ' ')}
+                        {(h.status || '').replace('_', ' ')}
                       </span>
-                      <span className="text-slate-500 text-xs font-medium">({h.department})</span>
+                      <span className="text-slate-500 text-xs font-medium">({h.department || 'Sistema'})</span>
                       {h.reason && <span className="text-red-600 text-xs italic ml-2">- {h.reason}</span>}
                     </div>
                     <div className="text-xs text-slate-400 font-medium">
-                      {new Date(h.timestamp).toLocaleString('es-VE')}
+                      {timeStr}
                     </div>
                   </div>
                 );

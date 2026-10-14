@@ -18,31 +18,31 @@ export const SalaEsperaAlkosto: React.FC = () => {
 
   // Clasificación por cadenas
   const alkostoOrders = useMemo(() => {
-    return pendingOrders.filter(o => (o.order.cliente || '').toUpperCase().includes('ALKOSTO'));
+    return pendingOrders.filter(o => (o.order?.cliente || '').toUpperCase().includes('ALKOSTO'));
   }, [pendingOrders]);
 
   const familiaOrders = useMemo(() => {
-    return pendingOrders.filter(o => (o.order.cliente || '').toUpperCase().includes('FAMILIA'));
+    return pendingOrders.filter(o => (o.order?.cliente || '').toUpperCase().includes('FAMILIA'));
   }, [pendingOrders]);
 
   const otrasOrders = useMemo(() => {
     return pendingOrders.filter(o => {
-      const name = (o.order.cliente || '').toUpperCase();
+      const name = (o.order?.cliente || '').toUpperCase();
       return !name.includes('ALKOSTO') && !name.includes('FAMILIA');
     });
   }, [pendingOrders]);
 
   // Totales acumulados
   const totalMontoAlkosto = useMemo(() => {
-    return alkostoOrders.reduce((sum, o) => sum + (o.order.total_pedido || 0), 0);
+    return alkostoOrders.reduce((sum, o) => sum + Number(o.order?.total_pedido || o.order?.monto_pedido || 0), 0);
   }, [alkostoOrders]);
 
   const totalMontoFamilia = useMemo(() => {
-    return familiaOrders.reduce((sum, o) => sum + (o.order.total_pedido || 0), 0);
+    return familiaOrders.reduce((sum, o) => sum + Number(o.order?.total_pedido || o.order?.monto_pedido || 0), 0);
   }, [familiaOrders]);
 
   const totalMontoGeneral = useMemo(() => {
-    return pendingOrders.reduce((sum, o) => sum + (o.order.total_pedido || 0), 0);
+    return pendingOrders.reduce((sum, o) => sum + Number(o.order?.total_pedido || o.order?.monto_pedido || 0), 0);
   }, [pendingOrders]);
 
   // Filtrado según la pestaña activa y el buscador
@@ -53,12 +53,15 @@ export const SalaEsperaAlkosto: React.FC = () => {
 
     if (search.trim()) {
       const term = search.toLowerCase().trim();
-      list = list.filter(o => 
-        (o.order.cliente || '').toLowerCase().includes(term) ||
-        (o.order.id_cliente || '').toLowerCase().includes(term) ||
-        (o.order.ruta || '').toLowerCase().includes(term) ||
-        (o.order.observaciones || '').toLowerCase().includes(term)
-      );
+      list = list.filter(o => {
+        const ord = o.order || ({} as any);
+        return (
+          (ord.cliente || '').toLowerCase().includes(term) ||
+          (ord.id_cliente || '').toLowerCase().includes(term) ||
+          (ord.ruta || '').toLowerCase().includes(term) ||
+          (ord.observaciones || '').toLowerCase().includes(term)
+        );
+      });
     }
 
     return list;

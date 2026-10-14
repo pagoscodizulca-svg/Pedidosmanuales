@@ -15,19 +15,20 @@ export const generateOrderHtml = (order: DbOrder, withHistory: boolean = false) 
         <td></td>
         <td class="text-center">${art?.codigo || ''}</td>
         <td class="text-left">${art?.descripcion || ''}</td>
-        <td class="bold text-right">${art?.precio_unitario ? '$' + art.precio_unitario.toFixed(2) : ''}</td>
-        <td class="bold text-right">${art?.sub_total ? '$' + art.sub_total.toFixed(2) : ''}</td>
+        <td class="bold text-right">${Number(art?.precio_unitario || 0) > 0 ? '$' + Number(art.precio_unitario).toFixed(2) : ''}</td>
+        <td class="bold text-right">${Number(art?.sub_total || 0) > 0 ? '$' + Number(art.sub_total).toFixed(2) : ''}</td>
       </tr>
     `;
   }).join('');
 
-  const historyHtml = withHistory && order.statusHistory.length > 0 ? `
+  const historyList = order.statusHistory || [];
+  const historyHtml = withHistory && historyList.length > 0 ? `
     <div class="history">
       <h3>Trazabilidad del Pedido</h3>
       <ul>
-        ${order.statusHistory.map(h => `
+        ${historyList.map(h => `
           <li class="history-item">
-            <strong>${new Date(h.timestamp).toLocaleString()}</strong> - [${h.department}] ${h.status} por ${h.changedBy} 
+            <strong>${h.timestamp ? new Date(h.timestamp).toLocaleString() : '-'}</strong> - [${h.department || 'Sistema'}] ${h.status} por ${h.changedBy || 'Usuario'} 
             ${h.reason ? `(Motivo: ${h.reason})` : ''}
           </li>
         `).join('')}
@@ -66,7 +67,7 @@ export const generateOrderHtml = (order: DbOrder, withHistory: boolean = false) 
           </div>
           <div class="cell-flex border-top">
             <div class="label">Nº PEDIDO:</div>
-            <div class="value bg-yellow bold red-text">${o.numero_pedido?.padStart(5, '0') || ''}</div>
+            <div class="value bg-yellow bold red-text">${String(o.numero_pedido || '').padStart(5, '0')}</div>
           </div>
         </div>
       </div>

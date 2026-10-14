@@ -37,29 +37,38 @@ function App() {
   useEffect(() => {
     if (!user) return;
 
+    let fetchTimer: any = null;
+    const debouncedFetchOrders = () => {
+      if (fetchTimer) clearTimeout(fetchTimer);
+      fetchTimer = setTimeout(() => {
+        fetchOrders();
+      }, 300);
+    };
+
     // Supabase Realtime Subscription (Escuchar INSERTS y UPDATES en tiempo real)
     const channel = supabase.channel('realtime_orders')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (payload: any) => {
          if (payload.eventType === 'INSERT') {
-           const cliente = payload.new.cliente || 'Nuevo Pedido';
+           const cliente = payload.new?.cliente || 'Nuevo Pedido';
            showToast(`Nuevo pedido recibido en Sala de Espera: ${cliente}`);
-           fetchOrders();
+           debouncedFetchOrders();
          } else if (payload.eventType === 'UPDATE') {
-           const newStatus = payload.new.status;
-           const oldStatus = payload.old.status;
-           const orderNum = payload.new.numero_pedido || 'SN';
+           const newStatus = payload.new?.status;
+           const oldStatus = payload.old?.status;
+           const orderNum = payload.new?.numero_pedido || 'SN';
            
-           if (newStatus !== oldStatus) {
+           if (newStatus && oldStatus && newStatus !== oldStatus) {
              showToast(`El pedido #${orderNum} pasó a estado ${newStatus}`);
            }
-           fetchOrders();
+           debouncedFetchOrders();
          } else {
-           fetchOrders();
+           debouncedFetchOrders();
          }
       })
       .subscribe();
 
     return () => {
+      if (fetchTimer) clearTimeout(fetchTimer);
       supabase.removeChannel(channel);
     };
   }, [user, fetchOrders]);

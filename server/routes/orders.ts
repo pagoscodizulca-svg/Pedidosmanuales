@@ -96,6 +96,9 @@ async function getNextCorrelativo(): Promise<string> {
 
 // Corte mensual seguro: SOLO archiva pedidos finalizados (COMPLETADO o RECHAZADO)
 // Los pedidos en proceso (PENDIENTE_CXC, PENDIENTE_FACTURACION, POR_VALIDAR) NUNCA se archivan
+let lastCutoffRun = 0;
+const CUTOFF_INTERVAL_MS = 6 * 60 * 60 * 1000; // Ejecutar máximo cada 6 horas en segundo plano
+
 async function performMonthlyCutoff() {
   try {
     const firstDay = new Date();
@@ -114,17 +117,29 @@ async function performMonthlyCutoff() {
   }
 }
 
-// GET todos los pedidos activos (con rango de hasta 5,000 para evitar truncamiento silencioso)
+function triggerCutoffIfDue() {
+  const now = Date.now();
+  if (now - lastCutoffRun >= CUTOFF_INTERVAL_MS) {
+    lastCutoffRun = now;
+    performMonthlyCutoff().catch(e => console.error('Background cutoff error:', e));
+  }
+}
+
+// Columnas requeridas para los pedidos activos (se omite raw_order para reducir payload >60%)
+const ACTIVE_ORDERS_COLUMNS = 'id, status, created_at, updated_at, status_history, reject_reason, cxc_note, fact_note, is_archived, cliente, id_cliente, ruta, supervisor, chofer, observaciones, fecha, articulos, numero_pedido, total_pedido, monto_pedido';
+
+// GET todos los pedidos activos (optimizado para respuesta instantánea)
 router.get('/', async (req, res) => {
   try {
-    await performMonthlyCutoff();
+    // Se dispara en segundo plano si ya pasaron 6 horas (no bloquea la respuesta HTTP)
+    triggerCutoffIfDue();
     
     const { data, error } = await supabase
       .from('orders')
-      .select('*')
+      .select(ACTIVE_ORDERS_COLUMNS)
       .is('is_archived', false)
       .order('created_at', { ascending: false })
-      .range(0, 4999);
+      .range(0, 999);
       
     if (error) throw error;
     

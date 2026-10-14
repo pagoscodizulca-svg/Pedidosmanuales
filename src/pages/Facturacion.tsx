@@ -78,27 +78,29 @@ export const Facturacion: React.FC = () => {
       if (activeTab === 'FACTURADOS' && o.status !== 'COMPLETADO') return false;
       if (activeTab === 'RECHAZADOS' && !(o.status === 'RECHAZADO' && rechazadoPorFacturacion(o))) return false;
 
-      const ruta = String(o.order.ruta || '').toLowerCase();
+      const ord = o.order || ({} as any);
+
+      const ruta = String(ord.ruta || '').toLowerCase();
       if (appliedFilters.vendedor && !ruta.includes(appliedFilters.vendedor.toLowerCase())) return false;
       
-      const obs = String(o.order.observaciones || '').toLowerCase();
+      const obs = String(ord.observaciones || '').toLowerCase();
       if (appliedFilters.zona && !obs.includes(appliedFilters.zona.toLowerCase())) return false;
       
       if (appliedFilters.cliente) {
         const q = appliedFilters.cliente.toLowerCase();
-        const clienteStr = String(o.order.cliente || '').toLowerCase();
-        const idClienteStr = String(o.order.id_cliente || '').toLowerCase();
+        const clienteStr = String(ord.cliente || '').toLowerCase();
+        const idClienteStr = String(ord.id_cliente || '').toLowerCase();
         if (!clienteStr.includes(q) && !idClienteStr.includes(q)) return false;
       }
       
       if (appliedFilters.correlativo) {
         const terms = appliedFilters.correlativo.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
-        const numPed = String(o.order.numero_pedido || '').toLowerCase();
+        const numPed = String(ord.numero_pedido || '').toLowerCase();
         if (!terms.some(t => numPed.includes(t))) return false;
       }
 
-      if (appliedFilters.dateFrom && o.order.fecha < appliedFilters.dateFrom) return false;
-      if (appliedFilters.dateTo && o.order.fecha > appliedFilters.dateTo) return false;
+      if (appliedFilters.dateFrom && (ord.fecha || '') < appliedFilters.dateFrom) return false;
+      if (appliedFilters.dateTo && (ord.fecha || '') > appliedFilters.dateTo) return false;
 
       return true;
     }).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -473,7 +475,7 @@ export const Facturacion: React.FC = () => {
                             {a.descripcion}
                           </div>
                           <div className="text-slate-500 font-medium">
-                            @ ${(a.precio_unitario || 0).toFixed(2)} <span className="ml-2 font-extrabold text-slate-900">${(a.sub_total || 0).toFixed(2)}</span>
+                            @ ${(Number(a.precio_unitario) || 0).toFixed(2)} <span className="ml-2 font-extrabold text-slate-900">${(Number(a.sub_total) || 0).toFixed(2)}</span>
                           </div>
                         </div>
                       ))}

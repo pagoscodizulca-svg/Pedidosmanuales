@@ -31,7 +31,8 @@ export const SeguimientoTable: React.FC<SeguimientoTableProps> = ({ orders, sele
       step3 = 'done';
     } else if (s === 'RECHAZADO') {
       // Find where it was rejected
-      const lastHist = order.statusHistory[order.statusHistory.length - 1];
+      const historyList = order.statusHistory || [];
+      const lastHist = historyList.length > 0 ? historyList[historyList.length - 1] : undefined;
       if (lastHist?.department === 'Cuentas por Cobrar') {
         step1 = 'rejected';
       } else {
@@ -89,8 +90,9 @@ export const SeguimientoTable: React.FC<SeguimientoTableProps> = ({ orders, sele
       );
     };
 
-    const cxcHist = order.statusHistory.find(h => h.department === 'Cuentas por Cobrar' && h.status !== 'CREADO');
-    const factHist = order.statusHistory.find(h => h.department === 'Facturación');
+    const historyList = order.statusHistory || [];
+    const cxcHist = historyList.find(h => h.department === 'Cuentas por Cobrar' && h.status !== 'CREADO');
+    const factHist = historyList.find(h => h.department === 'Facturación');
 
     let currentLoc = 'Cuentas por Cobrar';
     if (step2 === 'active') currentLoc = 'Facturación';
@@ -123,8 +125,13 @@ export const SeguimientoTable: React.FC<SeguimientoTableProps> = ({ orders, sele
   };
 
   const fmtFechaCarga = (iso: string) => {
-    const d = new Date(iso);
-    return `${d.getDate()}/${d.getMonth()+1}/${d.getFullYear()} ${d.toLocaleTimeString('es-VE', {hour:'2-digit', minute:'2-digit'})}`;
+    try {
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return '-';
+      return `${d.getDate()}/${d.getMonth()+1}/${d.getFullYear()} ${d.toLocaleTimeString('es-VE', {hour:'2-digit', minute:'2-digit'})}`;
+    } catch {
+      return '-';
+    }
   };
 
   return (
@@ -158,30 +165,36 @@ export const SeguimientoTable: React.FC<SeguimientoTableProps> = ({ orders, sele
             {orders.length === 0 && (
               <tr><td colSpan={9} className="p-8 text-center text-slate-400">No hay pedidos para mostrar.</td></tr>
             )}
-            {orders.map(order => (
-              <tr key={order.id} className={`transition-colors ${selectable && selectedIds!.has(order.id) ? 'bg-red-50/40' : 'hover:bg-slate-50/50'}`}>
-                <td className="pl-5 pr-2 py-4">
-                  {selectable && (
-                    <input
-                      type="checkbox"
-                      className="w-4 h-4 accent-codizulca-red cursor-pointer"
-                      checked={selectedIds!.has(order.id)}
-                      onChange={() => onToggle!(order.id)}
-                    />
-                  )}
-                </td>
-                <td className="px-4 py-4 text-center font-bold text-slate-700">{order.order.numero_pedido?.padStart(5, '0')}</td>
-                <td className="px-4 py-4 text-xs font-bold text-slate-700">{order.order.id_cliente || '-'}</td>
-                <td className="px-4 py-4 font-extrabold text-slate-800 text-[13px] uppercase">{order.order.cliente}</td>
-                <td className="px-4 py-4 text-xs font-semibold text-slate-600 uppercase">{order.order.ruta || '-'}</td>
-                <td className="px-4 py-4 text-xs font-semibold text-slate-800">{order.order.fecha}</td>
-                <td className="px-4 py-4 text-xs font-medium text-slate-500">{fmtFechaCarga(order.createdAt)}</td>
-                <td className="px-4 py-4 text-right font-extrabold text-slate-800">${(order.order.total_pedido || 0).toFixed(2)}</td>
-                <td className="px-8 py-2">
-                  {renderStepper(order)}
-                </td>
-              </tr>
-            ))}
+            {orders.map(order => {
+              const ord = order.order || ({} as any);
+              const numPed = String(ord.numero_pedido || '').trim();
+              const numPedDisplay = numPed ? numPed.padStart(5, '0') : '-';
+
+              return (
+                <tr key={order.id} className={`transition-colors ${selectable && selectedIds!.has(order.id) ? 'bg-red-50/40' : 'hover:bg-slate-50/50'}`}>
+                  <td className="pl-5 pr-2 py-4">
+                    {selectable && (
+                      <input
+                        type="checkbox"
+                        className="w-4 h-4 accent-codizulca-red cursor-pointer"
+                        checked={selectedIds!.has(order.id)}
+                        onChange={() => onToggle!(order.id)}
+                      />
+                    )}
+                  </td>
+                  <td className="px-4 py-4 text-center font-bold text-slate-700">{numPedDisplay}</td>
+                  <td className="px-4 py-4 text-xs font-bold text-slate-700">{ord.id_cliente || '-'}</td>
+                  <td className="px-4 py-4 font-extrabold text-slate-800 text-[13px] uppercase">{ord.cliente || '-'}</td>
+                  <td className="px-4 py-4 text-xs font-semibold text-slate-600 uppercase">{ord.ruta || '-'}</td>
+                  <td className="px-4 py-4 text-xs font-semibold text-slate-800">{ord.fecha || '-'}</td>
+                  <td className="px-4 py-4 text-xs font-medium text-slate-500">{order.createdAt ? fmtFechaCarga(order.createdAt) : '-'}</td>
+                  <td className="px-4 py-4 text-right font-extrabold text-slate-800">${Number(ord.total_pedido || ord.monto_pedido || 0).toFixed(2)}</td>
+                  <td className="px-8 py-2">
+                    {renderStepper(order)}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

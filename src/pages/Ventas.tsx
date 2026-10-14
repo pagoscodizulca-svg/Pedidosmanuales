@@ -39,7 +39,16 @@ export const Ventas: React.FC = () => {
   const [draft, setDraft] = useState<OrderData | null>(() => {
     try {
       const saved = localStorage.getItem('codizulca_ventas_draft_v1');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          return {
+            ...newDraft(),
+            ...parsed,
+            articulos: padRows(parsed.articulos || []),
+          };
+        }
+      }
     } catch {}
     return null;
   });
@@ -87,7 +96,7 @@ export const Ventas: React.FC = () => {
   }, [notice]);
 
   const nextNumero = useMemo(() => {
-    const max = orders.reduce((m, o) => Math.max(m, parseInt(o.order.numero_pedido || '0', 10) || 0), 0);
+    const max = orders.reduce((m, o) => Math.max(m, parseInt(String(o?.order?.numero_pedido || '0'), 10) || 0), 0);
     return String(max + 1).padStart(5, '0');
   }, [orders]);
 
@@ -119,7 +128,7 @@ export const Ventas: React.FC = () => {
         numero_pedido: undefined,
         cliente: (data.cliente || '').toUpperCase(),
         fecha: data.fecha || today(),
-        articulos: padRows(data.articulos),
+        articulos: padRows(data.articulos || []),
       });
     } catch {
       setNotice({ type: 'error', text: 'No se pudo procesar el pedido. Intente nuevamente o llénelo manualmente.' });
@@ -134,12 +143,13 @@ export const Ventas: React.FC = () => {
 
   /** Carga un pedido del historial como base para un nuevo pedido (duplicar). */
   const handleLoadFromHistory = (o: DbOrder) => {
+    const ord = o.order || ({} as any);
     setDraft({
       ...newDraft(),
-      ...o.order,
+      ...ord,
       numero_pedido: undefined,
       fecha: today(),
-      articulos: padRows(o.order.articulos),
+      articulos: padRows(ord.articulos || []),
     });
   };
 
@@ -175,9 +185,9 @@ export const Ventas: React.FC = () => {
     new Date(iso).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit', hour12: false });
 
   const resumenArticulo = (o: DbOrder) => {
-    const a = o.order.articulos?.[0];
+    const a = o?.order?.articulos?.[0];
     if (!a) return '';
-    return `${a.cantidad_solicitada} ${a.unidad_medida || ''} ${a.codigo ? `[${a.codigo}]` : ''} ${a.descripcion}`
+    return `${Number(a.cantidad_solicitada || 0)} ${a.unidad_medida || ''} ${a.codigo ? `[${a.codigo}]` : ''} ${a.descripcion || ''}`
       .replace(/\s+/g, ' ')
       .trim();
   };
