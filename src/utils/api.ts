@@ -16,21 +16,24 @@ const refreshAccessToken = async (): Promise<string | null> => {
       body: JSON.stringify({ refreshToken: user.refreshToken })
     });
 
-    if (!res.ok) {
+    if (res.ok) {
+      const data = await res.json();
+      if (data.token) {
+        useAuthStore.getState().updateTokens(data.token, data.refreshToken);
+        return data.token;
+      }
+    } else if (res.status === 401) {
+      // Solo cerrar sesión si el servidor confirma explícitamente que la sesión expiró de forma definitiva
+      console.warn('Sesión expirada en servidor de autenticación');
       useAuthStore.getState().logout();
       return null;
     }
-
-    const data = await res.json();
-    if (data.token) {
-      useAuthStore.getState().updateTokens(data.token, data.refreshToken);
-      return data.token;
-    }
   } catch (err) {
-    console.error('Failed to auto-refresh token:', err);
+    // Error de red o servidor reiniciando: NO cerrar sesión, permitir reintento
+    console.warn('No se pudo refrescar token por falla de red/servidor reiniciando:', err);
+    return null;
   }
 
-  useAuthStore.getState().logout();
   return null;
 };
 
@@ -44,7 +47,14 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}): Pro
 
   const url = API_BASE_URL ? `${API_BASE_URL}${endpoint}` : endpoint;
 
-  let res = await fetch(url, { ...options, headers: buildHeaders(token) });
+  let res: Response;
+  try {
+    res = await fetch(url, { ...options, headers: buildHeaders(token) });
+  } catch (err) {
+    // Error de red: propagar sin cerrar sesión
+    console.warn(`apiFetch error de red en ${endpoint}:`, err);
+    throw err;
+  }
 
   // If 401 and not an auth route, attempt token refresh once
   if (res.status === 401 && !endpoint.includes('/api/auth/login') && !endpoint.includes('/api/auth/refresh')) {
@@ -56,11 +66,11 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}): Pro
 
     const newToken = await refreshPromise;
     if (newToken) {
-      // Retry request with fresh token
-      res = await fetch(url, { ...options, headers: buildHeaders(newToken) });
-    } else {
-      // Token cannot be refreshed, ensure logout
-      useAuthStore.getState().logout();
+      try {
+        res = await fetch(url, { ...options, headers: buildHeaders(newToken) });
+      } catch (retryErr) {
+        throw retryErr;
+      }
     }
   }
 
