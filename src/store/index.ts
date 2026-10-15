@@ -47,6 +47,8 @@ interface AppState {
   updateFullOrder: (id: string, orderData: OrderData, newStatus?: OrderStatus) => Promise<void>;
   updateOrderStatus: (id: string, status: OrderStatus, cxcNote?: string, factNote?: string, rejectReason?: string, departmentParam?: string) => Promise<void>;
   updateBatchOrderStatus: (ids: string[], status: OrderStatus, department?: string) => Promise<void>;
+  deleteOrder: (id: string) => Promise<void>;
+  deleteBatchOrders: (ids: string[]) => Promise<void>;
   updateSupervisor: (id: string, supervisor: string) => Promise<void>;
   parseOrderWithAI: (text: string) => Promise<Partial<OrderData>>;
 }
@@ -204,6 +206,41 @@ export const useAppStore = create<AppState>((set, get) => ({
       } else {
         await get().fetchOrders();
       }
+    } catch (err: any) {
+      set({ error: err.message });
+      throw err;
+    }
+  },
+
+  deleteOrder: async (id) => {
+    try {
+      const response = await apiFetch(`/api/orders/${id}`, {
+        method: 'DELETE'
+      });
+      if (!response.ok) throw new Error('Error al eliminar el pedido');
+      set({
+        orders: get().orders.filter(o => o.id !== id),
+        historyOrders: get().historyOrders.filter(o => o.id !== id)
+      });
+    } catch (err: any) {
+      set({ error: err.message });
+      throw err;
+    }
+  },
+
+  deleteBatchOrders: async (ids) => {
+    try {
+      const response = await apiFetch('/api/orders/batch-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids })
+      });
+      if (!response.ok) throw new Error('Error al eliminar pedidos en lote');
+      const idSet = new Set(ids);
+      set({
+        orders: get().orders.filter(o => !idSet.has(o.id)),
+        historyOrders: get().historyOrders.filter(o => !idSet.has(o.id))
+      });
     } catch (err: any) {
       set({ error: err.message });
       throw err;

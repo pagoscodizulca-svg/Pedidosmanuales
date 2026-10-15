@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Printer, User } from 'lucide-react';
+import { X, Printer, User, Trash2, Loader2 } from 'lucide-react';
 import { DbOrder, OrderData } from '../../types';
 import { useAppStore } from '../../store/index';
 import { useAuthStore } from '../../store/auth';
@@ -50,8 +50,26 @@ export const OrderModal: React.FC<OrderModalProps> = ({ order, onClose }) => {
     });
   }, [order]);
 
-  const { updateFullOrder } = useAppStore();
+  const { updateFullOrder, deleteOrder } = useAppStore();
   const [saving, setSaving] = React.useState(false);
+  const [deleting, setDeleting] = React.useState(false);
+
+  const handleDeleteModal = async () => {
+    if (!isVentas) return;
+    const clientName = draft.cliente || order.order?.cliente || 'este pedido';
+    if (!window.confirm(`¿Estás seguro de eliminar permanentemente el pedido de "${clientName}"? Esta acción no se puede deshacer.`)) {
+      return;
+    }
+    setDeleting(true);
+    try {
+      await deleteOrder(order.id);
+      onClose();
+    } catch (err: any) {
+      alert(`Error al eliminar pedido: ${err.message}`);
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const handleSaveAndSend = async () => {
     if (!isVentas) {
@@ -185,6 +203,17 @@ export const OrderModal: React.FC<OrderModalProps> = ({ order, onClose }) => {
             >
               <Printer size={16} /> Imprimir Pedido
             </button>
+            {isVentas && order.status !== 'COMPLETADO' && (
+              <button 
+                onClick={handleDeleteModal}
+                disabled={deleting}
+                className="flex items-center gap-2 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-4 py-2.5 rounded-lg font-bold transition-colors text-sm disabled:opacity-50"
+                title="Eliminar este pedido permanentemente"
+              >
+                {deleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                <span>Eliminar Pedido</span>
+              </button>
+            )}
           </div>
           <div className="flex items-center gap-3">
             <button 

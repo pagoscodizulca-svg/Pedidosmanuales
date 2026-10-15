@@ -1,15 +1,17 @@
 import React, { useState, useMemo } from 'react';
 import { useAppStore } from '../../store/index';
-import { Clock, Eye, Smartphone, Search, CheckCircle2, Building2, Store, ShoppingBag } from 'lucide-react';
+import { Clock, Eye, Smartphone, Search, CheckCircle2, Building2, Store, ShoppingBag, Trash2, Loader2 } from 'lucide-react';
 import { OrderModal } from '../shared/OrderModal';
 import { DbOrder } from '../../types';
 
 export const SalaEsperaAlkosto: React.FC = () => {
-  const { orders, updateFullOrder } = useAppStore();
+  const { orders, updateFullOrder, deleteOrder, deleteBatchOrders } = useAppStore();
   const [selectedOrder, setSelectedOrder] = useState<DbOrder | null>(null);
   const [selectedChain, setSelectedChain] = useState<'TODAS' | 'ALKOSTO' | 'FAMILIA'>('TODAS');
   const [search, setSearch] = useState('');
   const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [isClearingAll, setIsClearingAll] = useState(false);
 
   // Filtramos todos los pedidos pendientes de la sala de espera
   const pendingOrders = useMemo(() => {
@@ -102,6 +104,38 @@ export const SalaEsperaAlkosto: React.FC = () => {
     }
   };
 
+  const handleDeleteOrder = async (order: DbOrder) => {
+    const clientName = order.order?.cliente || 'este pedido';
+    if (!window.confirm(`¿Estás seguro de eliminar el pedido de "${clientName}" de la sala de espera? Esta acción no se puede deshacer.`)) {
+      return;
+    }
+    setDeletingId(order.id);
+    try {
+      await deleteOrder(order.id);
+    } catch (err: any) {
+      alert(`Error al eliminar pedido: ${err.message}`);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleClearWaitingRoom = async () => {
+    if (pendingOrders.length === 0) return;
+    const count = pendingOrders.length;
+    if (!window.confirm(`¿Estás seguro de ELIMINAR TODOS los ${count} pedidos de la sala de espera? Esta acción eliminará permanentemente estos pedidos del sistema.`)) {
+      return;
+    }
+    setIsClearingAll(true);
+    try {
+      const ids = pendingOrders.map(o => o.id);
+      await deleteBatchOrders(ids);
+    } catch (err: any) {
+      alert(`Error al vaciar la sala de espera: ${err.message}`);
+    } finally {
+      setIsClearingAll(false);
+    }
+  };
+
   return (
     <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col">
       {/* Encabezado Principal */}
@@ -126,7 +160,7 @@ export const SalaEsperaAlkosto: React.FC = () => {
         </div>
 
         {/* Resumen Global */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-right">
             <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Monto en Espera</p>
             <p className="text-sm font-black text-slate-800">${totalMontoGeneral.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
@@ -134,6 +168,17 @@ export const SalaEsperaAlkosto: React.FC = () => {
           <div className="flex items-center justify-center bg-amber-100 border border-amber-300 text-amber-900 font-extrabold text-xs h-10 px-4 rounded-xl shadow-sm">
             {pendingOrders.length} {pendingOrders.length === 1 ? 'PEDIDO' : 'PEDIDOS'}
           </div>
+          {pendingOrders.length > 0 && (
+            <button
+              onClick={handleClearWaitingRoom}
+              disabled={isClearingAll}
+              className="flex items-center gap-1.5 bg-red-50 hover:bg-red-100 text-red-600 hover:text-red-700 border border-red-200 text-xs font-black h-10 px-3.5 rounded-xl transition-all shadow-sm disabled:opacity-50"
+              title="Eliminar todos los pedidos de la sala de espera"
+            >
+              {isClearingAll ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+              <span>Vaciar Sala</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -232,9 +277,19 @@ export const SalaEsperaAlkosto: React.FC = () => {
                         {o.order.cliente}
                       </h3>
                     </div>
-                    <span className="shrink-0 bg-amber-50 border border-amber-200 text-amber-700 text-[10px] px-2 py-0.5 rounded font-black uppercase tracking-wider">
-                      POR VALIDAR
-                    </span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="bg-amber-50 border border-amber-200 text-amber-700 text-[10px] px-2 py-0.5 rounded font-black uppercase tracking-wider">
+                        POR VALIDAR
+                      </span>
+                      <button
+                        onClick={() => handleDeleteOrder(o)}
+                        disabled={deletingId === o.id}
+                        title="Eliminar pedido de la sala de espera"
+                        className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-200 disabled:opacity-50"
+                      >
+                        {deletingId === o.id ? <Loader2 size={13} className="animate-spin text-red-500" /> : <Trash2 size={13} />}
+                      </button>
+                    </div>
                   </div>
 
                   {/* Datos Operativos */}
@@ -262,17 +317,26 @@ export const SalaEsperaAlkosto: React.FC = () => {
                     <span className="text-lg font-black text-slate-900">${(o.order.total_pedido || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                   
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleDeleteOrder(o)}
+                      disabled={deletingId === o.id}
+                      className="flex items-center justify-center gap-1.5 px-3 py-2.5 bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700 rounded-xl text-xs font-bold transition-all border border-red-200 disabled:opacity-50 shrink-0"
+                      title="Eliminar pedido de la sala de espera"
+                    >
+                      {deletingId === o.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                      <span className="hidden sm:inline">Eliminar</span>
+                    </button>
                     <button
                       onClick={() => setSelectedOrder(o)}
-                      className="flex items-center justify-center gap-1.5 bg-slate-100 text-slate-700 py-2.5 rounded-xl text-xs font-extrabold hover:bg-slate-200 transition-all border border-slate-200"
+                      className="flex-1 flex items-center justify-center gap-1.5 bg-slate-100 text-slate-700 py-2.5 rounded-xl text-xs font-extrabold hover:bg-slate-200 transition-all border border-slate-200"
                     >
                       <Eye size={14} /> Validar Formato
                     </button>
                     <button
                       onClick={() => handleQuickApprove(o)}
                       disabled={isApproving}
-                      className="flex items-center justify-center gap-1.5 bg-codizulca-cyan text-slate-800 py-2.5 rounded-xl text-xs font-black hover:bg-cyan-400 hover:shadow-sm transition-all border border-cyan-300 disabled:opacity-50"
+                      className="flex-1 flex items-center justify-center gap-1.5 bg-codizulca-cyan text-slate-800 py-2.5 rounded-xl text-xs font-black hover:bg-cyan-400 hover:shadow-sm transition-all border border-cyan-300 disabled:opacity-50"
                     >
                       <CheckCircle2 size={14} className="text-slate-800" />
                       {isApproving ? 'Aprobando...' : 'Aprobar a CxC'}

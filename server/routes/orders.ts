@@ -522,4 +522,54 @@ router.put('/:id/supervisor', async (req, res) => {
   }
 });
 
+// DELETE single order
+router.delete('/:id', async (req, res) => {
+  const { id } = req.params;
+  const userRole = getUserRole(req);
+
+  if (!['ventas', 'gerencia', 'master', 'cxc'].includes(userRole)) {
+    return res.status(403).json({ error: 'Acceso denegado: No tiene permisos para eliminar pedidos.' });
+  }
+
+  try {
+    const { error } = await supabase
+      .from('orders')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+    res.json({ success: true, id });
+  } catch (err: any) {
+    console.error('Error deleting order:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST batch delete orders
+router.post('/batch-delete', async (req, res) => {
+  const { ids } = req.body;
+  const userRole = getUserRole(req);
+
+  if (!['ventas', 'gerencia', 'master', 'cxc'].includes(userRole)) {
+    return res.status(403).json({ error: 'Acceso denegado: No tiene permisos para eliminar pedidos.' });
+  }
+
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'Lista de IDs requerida' });
+  }
+
+  try {
+    const { error } = await supabase
+      .from('orders')
+      .delete()
+      .in('id', ids);
+
+    if (error) throw error;
+    res.json({ success: true, count: ids.length, deletedIds: ids });
+  } catch (err: any) {
+    console.error('Error in batch delete orders:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
