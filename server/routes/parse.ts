@@ -10,47 +10,119 @@ const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GE
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-let CLIENTS: Array<{ id_cliente: string; nombre: string; vendedor: string }> = [];
+type ClienteEntry = { id_cliente: string; nombre: string; vendedor: string };
+type ProductoEntry = { id_producto: string; descripcion: string };
+
+let CLIENTS: ClienteEntry[] = [];
+const CLIENT_BY_ID = new Map<string, ClienteEntry>();
+const CLIENT_BY_NUM = new Map<number, ClienteEntry>();
+const CLIENT_BY_NAME = new Map<string, ClienteEntry>();
+
+let PRODUCTOS: ProductoEntry[] = [];
+const PRODUCTO_BY_ID = new Map<string, ProductoEntry>();
+const PRODUCTO_BY_NUM = new Map<number, ProductoEntry>();
+const PRODUCTO_BY_DESC = new Map<string, ProductoEntry>();
+
 try {
   const p = path.resolve(__dirname, '../data/clientes.json');
-  if (fs.existsSync(p)) CLIENTS = JSON.parse(fs.readFileSync(p, 'utf8'));
+  if (fs.existsSync(p)) {
+    CLIENTS = JSON.parse(fs.readFileSync(p, 'utf8'));
+    for (const c of CLIENTS) {
+      const id = c.id_cliente.trim().toUpperCase();
+      CLIENT_BY_ID.set(id, c);
+      CLIENT_BY_ID.set(id.padStart(6, '0'), c);
+      const n = Number(id);
+      if (!Number.isNaN(n) && n > 0) CLIENT_BY_NUM.set(n, c);
+      CLIENT_BY_NAME.set(c.nombre.trim().toUpperCase(), c);
+    }
+  }
 } catch (e) {
   console.warn('[parse] Error cargando catálogo de clientes:', e);
 }
 
-function enrichOrderWithClient(order: Partial<OrderData>) {
-  if (!CLIENTS.length) return;
-
-  // 1. Si viene con id_cliente, buscar por código exacto o rellenado a 6 dígitos
-  if (order.id_cliente) {
-    const raw = order.id_cliente.trim().toUpperCase();
-    const padded = raw.padStart(6, '0');
-    const match = CLIENTS.find(c => c.id_cliente === raw || c.id_cliente === padded);
-    if (match) {
-      order.id_cliente = match.id_cliente;
-      if (!order.cliente || order.cliente.trim().length === 0) {
-        order.cliente = match.nombre;
-      }
-      if (!order.ruta && match.vendedor) {
-        order.ruta = match.vendedor;
-      }
-      return;
+try {
+  const prodPath = path.resolve(__dirname, '../../src/data/productos.json');
+  if (fs.existsSync(prodPath)) {
+    PRODUCTOS = JSON.parse(fs.readFileSync(prodPath, 'utf8'));
+    for (const pr of PRODUCTOS) {
+      const id = pr.id_producto.trim().toUpperCase();
+      PRODUCTO_BY_ID.set(id, pr);
+      PRODUCTO_BY_ID.set(id.padStart(6, '0'), pr);
+      const n = Number(id);
+      if (!Number.isNaN(n) && n > 0) PRODUCTO_BY_NUM.set(n, pr);
+      PRODUCTO_BY_DESC.set(pr.descripcion.trim().toUpperCase(), pr);
     }
   }
+} catch (e) {
+  console.warn('[parse] Error cargando catálogo de productos:', e);
+}
 
-  // 2. Si viene con nombre de cliente pero sin id_cliente, buscar por coincidencia de nombre
-  if (order.cliente && order.cliente.trim()) {
-    const clientName = order.cliente.trim().toUpperCase();
-    let match = CLIENTS.find(c => c.nombre.toUpperCase() === clientName);
-    if (!match && clientName.length >= 4) {
-      match = CLIENTS.find(c => c.nombre.toUpperCase().includes(clientName) || clientName.includes(c.nombre.toUpperCase()));
+function findClientFast(code?: string, name?: string): ClienteEntry | undefined {
+  if (code && code.trim()) {
+    const raw = code.trim().toUpperCase();
+    const padded = raw.padStart(6, '0');
+    const direct = CLIENT_BY_ID.get(raw) || CLIENT_BY_ID.get(padded);
+    if (direct) return direct;
+    const n = Number(raw);
+    if (!Number.isNaN(n) && n > 0) {
+      const byNum = CLIENT_BY_NUM.get(n);
+      if (byNum) return byNum;
     }
-    if (match) {
-      order.id_cliente = match.id_cliente;
-      order.cliente = match.nombre;
-      if (!order.ruta && match.vendedor) {
-        order.ruta = match.vendedor;
+  }
+  if (name && name.trim()) {
+    const cleanName = name.trim().toUpperCase();
+    const exact = CLIENT_BY_NAME.get(cleanName);
+    if (exact) return exact;
+    // Si escribieron el código dentro del campo cliente
+    if (/^\d{1,6}$/.test(cleanName)) {
+      const byCode = CLIENT_BY_ID.get(cleanName.padStart(6, '0')) || CLIENT_BY_NUM.get(Number(cleanName));
+      if (byCode) return byCode;
+    }
+    if (cleanName.length >= 4) {
+      for (const c of CLIENTS) {
+        const upper = c.nombre.toUpperCase();
+        if (upper.includes(cleanName) || cleanName.includes(upper)) return c;
       }
+    }
+  }
+  return undefined;
+}
+
+function enrichOrderWithClient(order: Partial<OrderData>) {
+  if (!CLIENTS.length) return;
+  const match = findClientFast(order.id_cliente, order.cliente);
+  if (match) {
+    order.id_cliente = match.id_cliente;
+    order.cliente = match.nombre;
+    if (!order.ruta && match.vendedor) {
+      order.ruta = match.vendedor;
+    }
+  }
+}
+
+function enrichOrderWithProducts(order: Partial<OrderData>) {
+  if (!order.articulos || !Array.isArray(order.articulos)) return;
+  for (const art of order.articulos) {
+    const rawCode = (art.codigo || '').trim().toUpperCase();
+    const rawDesc = (art.descripcion || '').trim().toUpperCase();
+    let matchedProd: ProductoEntry | undefined;
+
+    if (rawCode) {
+      matchedProd =
+        PRODUCTO_BY_ID.get(rawCode) ||
+        PRODUCTO_BY_ID.get(rawCode.padStart(6, '0')) ||
+        (Number(rawCode) > 0 ? PRODUCTO_BY_NUM.get(Number(rawCode)) : undefined);
+    }
+    if (!matchedProd && rawDesc) {
+      matchedProd = PRODUCTO_BY_DESC.get(rawDesc);
+    }
+    if (matchedProd) {
+      art.codigo = matchedProd.id_producto;
+      if (!rawDesc) {
+        art.descripcion = matchedProd.descripcion;
+      }
+    } else if (rawCode && /^\d{1,6}$/.test(rawCode)) {
+      art.codigo = rawCode.padStart(6, '0');
     }
   }
 }
@@ -79,11 +151,11 @@ function regexFallbackParse(text: string): Partial<OrderData> {
   order.supervisor = grab(/supervisor[:\s]+([^\n,]+)/i);
   order.chofer = grab(/chofer[:\s]+([^\n,]+)/i);
   order.observaciones = grab(/(?:observaci[oó]n(?:es)?|obs|direcci[oó]n)[:\s]+([^\n]+)/i);
-  order.id_cliente = grab(/(?:id|c[oó]digo)\s*(?:de\s*)?cliente[:\s]+(\S+)/i);
+  order.id_cliente = grab(/(?:id|c[oó]digo|cod\.?)\s*(?:de\s*)?(?:cliente)?[:\s]+(\d{1,6})/i);
 
   const unitAlt = Object.keys(UNIT_MAP).sort((a, b) => b.length - a.length).join('|');
   const itemRe = new RegExp(
-    String.raw`^\s*[-•*]?\s*(\d+(?:[.,]\d+)?)\s*(${unitAlt})?\.?\s+(?:\[?#?(\d{2,6})\]?\s+)?(.+?)(?:\s+(?:a|@|x|precio|por)\s*\$?\s*(\d+(?:[.,]\d+)?)\s*\$?)?\s*$`,
+    String.raw`^\s*[-•*]?\s*(\d+(?:[.,]\d+)?)\s*(${unitAlt})?\.?\s+(?:\[?#?(\d{1,6})\]?\s+)?(.+?)(?:\s+(?:a|@|x|precio|por)\s*\$?\s*(\d+(?:[.,]\d+)?)\s*\$?)?\s*$`,
     'i'
   );
 
@@ -104,12 +176,13 @@ function regexFallbackParse(text: string): Partial<OrderData> {
   }
 
   enrichOrderWithClient(order);
+  enrichOrderWithProducts(order);
   return order;
 }
 
 router.post('/', async (req, res) => {
   const { text } = req.body;
-  if (!text) {
+  if (!text || typeof text !== 'string' || !text.trim()) {
     return res.status(400).json({ error: 'Text is required' });
   }
 
@@ -312,12 +385,13 @@ ${text}
     const response = await ai.models.generateContent({
       model: 'gemini-flash-lite-latest',
       contents: prompt,
-      config: { responseMimeType: 'application/json' },
+      config: { responseMimeType: 'application/json', temperature: 0 },
     });
 
     if (!response.text) throw new Error('Respuesta vacía de Gemini');
 
-    const parsed = JSON.parse(response.text);
+    const cleanedText = response.text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+    const parsed = JSON.parse(cleanedText);
     (parsed.articulos || []).forEach((art: any) => {
       art.cantidad_solicitada = Number(art.cantidad_solicitada) || 0;
       art.precio_unitario = Number(art.precio_unitario) || 0;
@@ -325,6 +399,7 @@ ${text}
       art.sub_total = Math.round(art.cantidad_solicitada * art.precio_unitario * 100) / 100;
     });
     enrichOrderWithClient(parsed);
+    enrichOrderWithProducts(parsed);
     return res.json(parsed);
   } catch (error: any) {
     console.warn('[parse] Fallback heurístico:', error?.message || error);

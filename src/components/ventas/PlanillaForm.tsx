@@ -8,6 +8,57 @@ export const STANDARD_ROWS = 15;
 
 export const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
+// Índices en memoria O(1) para autocompletado instantáneo sin recorrer arreglos en cada pulsación
+const CLIENTE_BY_ID = new Map(CLIENTES.map((c) => [c.id_cliente, c]));
+const CLIENTE_BY_NUM = new Map(
+  CLIENTES.map((c) => [parseInt(c.id_cliente, 10), c]).filter(([k]) => !isNaN(k as number)) as [number, (typeof CLIENTES)[0]][]
+);
+const CLIENTE_BY_NAME = new Map(CLIENTES.map((c) => [c.nombre.toUpperCase(), c]));
+
+const PRODUCTO_BY_ID = new Map(PRODUCTOS.map((p) => [p.id, p]));
+const PRODUCTO_BY_NUM = new Map(
+  PRODUCTOS.map((p) => [parseInt(p.id, 10), p]).filter(([k]) => !isNaN(k as number)) as [number, (typeof PRODUCTOS)[0]][]
+);
+const PRODUCTO_BY_DESC = new Map(PRODUCTOS.map((p) => [p.descripcion.toUpperCase(), p]));
+
+export const findClienteByCode = (raw: string) => {
+  const clean = raw.replace(/[^\w]/g, '').trim().toUpperCase();
+  if (!clean) return undefined;
+  const isNum = /^\d+$/.test(clean);
+  const padded = isNum ? clean.padStart(6, '0') : clean;
+  const exact = CLIENTE_BY_ID.get(clean) || CLIENTE_BY_ID.get(padded);
+  if (exact) return exact;
+  if (isNum) {
+    const numVal = parseInt(clean, 10);
+    if (!isNaN(numVal) && clean.length >= String(numVal).length) {
+      return CLIENTE_BY_NUM.get(numVal);
+    }
+  }
+  return undefined;
+};
+
+export const findClienteByName = (raw: string) => {
+  const clean = raw.trim().toUpperCase();
+  if (!clean) return undefined;
+  return CLIENTE_BY_NAME.get(clean);
+};
+
+export const findProductoByCode = (raw: string) => {
+  const clean = raw.replace(/[\[\]]/g, '').trim().toUpperCase();
+  if (!clean) return undefined;
+  const isNum = /^\d+$/.test(clean);
+  const padded = isNum ? clean.padStart(6, '0') : clean;
+  const exact = PRODUCTO_BY_ID.get(clean) || PRODUCTO_BY_ID.get(padded);
+  if (exact) return exact;
+  if (isNum) {
+    const numVal = parseInt(clean, 10);
+    if (!isNaN(numVal) && clean.length >= String(numVal).length) {
+      return PRODUCTO_BY_NUM.get(numVal);
+    }
+  }
+  return undefined;
+};
+
 export const emptyRow = (): ArticuloItem => ({
   codigo: '',
   descripcion: '',
@@ -28,10 +79,28 @@ export const padRows = (arts: Partial<ArticuloItem>[] = []): ArticuloItem[] => {
   const rows = safeArts.map((a) => {
     const cant = Number(a?.cantidad_solicitada) || 0;
     const precio = Number(a?.precio_unitario) || 0;
+    let codigo = (a?.codigo || '').trim();
+    let descripcion = (a?.descripcion || '').trim().toUpperCase();
+
+    if (codigo) {
+      const matchedProd = findProductoByCode(codigo);
+      if (matchedProd) {
+        codigo = matchedProd.id;
+        if (!descripcion) descripcion = matchedProd.descripcion;
+      }
+    } else if (descripcion) {
+      const matchedByDesc = PRODUCTO_BY_DESC.get(descripcion);
+      if (matchedByDesc) {
+        codigo = matchedByDesc.id;
+        descripcion = matchedByDesc.descripcion;
+      }
+    }
+
     return {
       ...emptyRow(),
       ...a,
-      descripcion: a?.descripcion || '',
+      codigo,
+      descripcion,
       unidad_medida: (a?.unidad_medida || '').toUpperCase(),
       cantidad_solicitada: cant,
       precio_unitario: precio,
@@ -76,18 +145,7 @@ export const PlanillaForm: React.FC<PlanillaFormProps> = ({ value, onChange, nex
   // Auto-completar cliente al escribir o cambiar ID de Cliente
   const handleIdClienteChange = (raw: string) => {
     const val = raw.toUpperCase();
-    const clean = val.replace(/[^\w]/g, '').trim();
-    const isNum = /^\d+$/.test(clean);
-    const padded = isNum ? clean.padStart(6, '0') : clean;
-    const numVal = isNum ? parseInt(clean, 10) : NaN;
-
-    // Buscar si coincide por código exacto, por código con 6 ceros, o por valor numérico
-    const found = clean.length > 0 ? CLIENTES.find(
-      (c) =>
-        c.id_cliente === clean ||
-        c.id_cliente === padded ||
-        (!isNaN(numVal) && parseInt(c.id_cliente, 10) === numVal && clean.length >= String(numVal).length)
-    ) : undefined;
+    const found = findClienteByCode(val);
 
     if (found) {
       set({
@@ -106,14 +164,7 @@ export const PlanillaForm: React.FC<PlanillaFormProps> = ({ value, onChange, nex
     const clean = raw.replace(/[^\w]/g, '').trim();
     const isNum = /^\d+$/.test(clean);
     const padded = isNum ? clean.padStart(6, '0') : clean;
-    const numVal = isNum ? parseInt(clean, 10) : NaN;
-
-    const found = CLIENTES.find(
-      (c) =>
-        c.id_cliente === clean ||
-        c.id_cliente === padded ||
-        (!isNaN(numVal) && parseInt(c.id_cliente, 10) === numVal)
-    );
+    const found = findClienteByCode(clean);
 
     if (found) {
       set({
@@ -129,7 +180,7 @@ export const PlanillaForm: React.FC<PlanillaFormProps> = ({ value, onChange, nex
   // Auto-completar código y ruta al seleccionar o escribir Nombre del Cliente
   const handleClienteChange = (raw: string) => {
     const val = raw.toUpperCase();
-    const found = CLIENTES.find((c) => c.nombre.toUpperCase() === val.trim());
+    const found = findClienteByName(val);
     if (found) {
       set({
         cliente: val,
@@ -143,17 +194,7 @@ export const PlanillaForm: React.FC<PlanillaFormProps> = ({ value, onChange, nex
 
   // Auto-completar descripción al ingresar Código de producto
   const handleItemCodigoChange = (idx: number, raw: string) => {
-    const clean = raw.replace(/[\[\]]/g, '').trim();
-    const isNum = /^\d+$/.test(clean);
-    const padded = isNum ? clean.padStart(6, '0') : clean;
-    const numVal = isNum ? parseInt(clean, 10) : NaN;
-
-    const found = clean.length > 0 ? PRODUCTOS.find(
-      (p) =>
-        p.id === clean ||
-        p.id === padded ||
-        (!isNaN(numVal) && parseInt(p.id, 10) === numVal && clean.length >= String(numVal).length)
-    ) : undefined;
+    const found = findProductoByCode(raw);
 
     const arts = [...(value.articulos || [])];
     if (found) {
@@ -178,14 +219,7 @@ export const PlanillaForm: React.FC<PlanillaFormProps> = ({ value, onChange, nex
     const clean = raw.replace(/[\[\]]/g, '').trim();
     const isNum = /^\d+$/.test(clean);
     const padded = isNum ? clean.padStart(6, '0') : clean;
-    const numVal = isNum ? parseInt(clean, 10) : NaN;
-
-    const found = PRODUCTOS.find(
-      (p) =>
-        p.id === clean ||
-        p.id === padded ||
-        (!isNaN(numVal) && parseInt(p.id, 10) === numVal)
-    );
+    const found = findProductoByCode(clean);
 
     const arts = [...(value.articulos || [])];
     if (found) {
@@ -207,7 +241,7 @@ export const PlanillaForm: React.FC<PlanillaFormProps> = ({ value, onChange, nex
   // Auto-completar código al seleccionar o escribir Descripción de producto
   const handleItemDescripcionChange = (idx: number, raw: string) => {
     const upper = raw.toUpperCase().trim();
-    const found = PRODUCTOS.find((p) => p.descripcion.toUpperCase() === upper);
+    const found = PRODUCTO_BY_DESC.get(upper);
     const arts = [...(value.articulos || [])];
     if (found) {
       arts[idx] = { ...arts[idx], descripcion: raw.toUpperCase(), codigo: found.id };
@@ -247,33 +281,33 @@ export const PlanillaForm: React.FC<PlanillaFormProps> = ({ value, onChange, nex
 
       <datalist id="clientes-list">
         {filteredClientes.map((c) => (
-          <option key={c.id_cliente} value={c.nombre}>
-            {c.id_cliente} {c.vendedor ? `(${c.vendedor})` : ''}
-          </option>
+          <option
+            key={`cli-${c.id_cliente}`}
+            value={c.nombre}
+            label={`${c.id_cliente}${c.vendedor ? ` (${c.vendedor})` : ''}`}
+          />
         ))}
       </datalist>
 
       <datalist id="codigos-clientes-list">
         {filteredCodigosClientes.map((c) => (
-          <option key={c.id_cliente} value={c.id_cliente}>
-            {c.nombre} {c.vendedor ? `(${c.vendedor})` : ''}
-          </option>
+          <option
+            key={`cod-${c.id_cliente}`}
+            value={c.id_cliente}
+            label={`${c.nombre}${c.vendedor ? ` (${c.vendedor})` : ''}`}
+          />
         ))}
       </datalist>
 
       <datalist id="productos-list">
         {PRODUCTOS.map((p) => (
-          <option key={p.id} value={p.descripcion}>
-            {p.id}
-          </option>
+          <option key={`prd-${p.id}`} value={p.descripcion} label={p.id} />
         ))}
       </datalist>
 
       <datalist id="codigos-productos-list">
         {PRODUCTOS.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.descripcion}
-          </option>
+          <option key={`pco-${p.id}`} value={p.id} label={p.descripcion} />
         ))}
       </datalist>
 

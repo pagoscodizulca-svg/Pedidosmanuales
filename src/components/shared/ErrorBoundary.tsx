@@ -19,10 +19,27 @@ export class ErrorBoundary extends Component<Props, State> {
   };
 
   public static getDerivedStateFromError(error: Error): State {
+    const msg = String(error?.message || error || '');
+    if (
+      error?.name === 'NotFoundError' ||
+      msg.includes('removeChild') ||
+      msg.includes('insertBefore')
+    ) {
+      // Auto-recuperación silenciosa ante mutaciones DOM externas (ej. traductor del navegador)
+      return { hasError: false, error: null, errorInfo: null };
+    }
     return { hasError: true, error, errorInfo: null };
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    const msg = String(error?.message || error || '');
+    if (
+      error?.name === 'NotFoundError' ||
+      msg.includes('removeChild') ||
+      msg.includes('insertBefore')
+    ) {
+      return;
+    }
     console.error('ErrorBoundary caught an unhandled error:', error, errorInfo);
     this.setState({ error, errorInfo });
   }

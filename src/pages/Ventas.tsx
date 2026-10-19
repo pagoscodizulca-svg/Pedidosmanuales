@@ -2,7 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Plus, ArrowRight, Pencil, History, Settings, FileText, Save, ClipboardList, Loader2, CheckCircle2, AlertCircle,
 } from 'lucide-react';
-import { PlanillaForm, padRows, isRowEmpty, calcTotal } from '../components/ventas/PlanillaForm';
+import {
+  PlanillaForm, padRows, isRowEmpty, calcTotal, findClienteByCode, findClienteByName,
+} from '../components/ventas/PlanillaForm';
 import { SeguimientoBlock } from '../components/shared/SeguimientoBlock';
 import { SalaEsperaAlkosto } from '../components/ventas/SalaEsperaAlkosto';
 import { useAppStore } from '../store/index';
@@ -122,13 +124,41 @@ export const Ventas: React.FC = () => {
     setParsing(true);
     try {
       const data = await parseOrderWithAI(text);
+      let idCliente = (data.id_cliente || '').trim().toUpperCase();
+      let cliente = (data.cliente || '').trim().toUpperCase();
+      let ruta = (data.ruta || '').trim().toUpperCase();
+
+      if (idCliente) {
+        const matched = findClienteByCode(idCliente);
+        if (matched) {
+          idCliente = matched.id_cliente;
+          if (!cliente) cliente = matched.nombre;
+          if (!ruta && matched.vendedor) ruta = matched.vendedor;
+        }
+      } else if (cliente) {
+        const matched = findClienteByName(cliente);
+        if (matched) {
+          idCliente = matched.id_cliente;
+          cliente = matched.nombre;
+          if (!ruta && matched.vendedor) ruta = matched.vendedor;
+        }
+      }
+
+      const normalizedArts = padRows(data.articulos || []);
+      const total = calcTotal(normalizedArts);
+
+      setHasRestoredDraft(false);
       setDraft({
         ...newDraft(),
         ...data,
         numero_pedido: undefined,
-        cliente: (data.cliente || '').toUpperCase(),
+        id_cliente: idCliente,
+        cliente,
+        ruta,
         fecha: data.fecha || today(),
-        articulos: padRows(data.articulos || []),
+        articulos: normalizedArts,
+        total_pedido: total,
+        monto_pedido: total,
       });
     } catch {
       setNotice({ type: 'error', text: 'No se pudo procesar el pedido. Intente nuevamente o llénelo manualmente.' });
@@ -144,12 +174,17 @@ export const Ventas: React.FC = () => {
   /** Carga un pedido del historial como base para un nuevo pedido (duplicar). */
   const handleLoadFromHistory = (o: DbOrder) => {
     const ord = o.order || ({} as any);
+    const normalizedArts = padRows(ord.articulos || []);
+    const total = calcTotal(normalizedArts);
+    setHasRestoredDraft(false);
     setDraft({
       ...newDraft(),
       ...ord,
       numero_pedido: undefined,
       fecha: today(),
-      articulos: padRows(ord.articulos || []),
+      articulos: normalizedArts,
+      total_pedido: total,
+      monto_pedido: total,
     });
   };
 
@@ -209,7 +244,7 @@ export const Ventas: React.FC = () => {
                 onClick={handleNuevo}
                 className="flex flex-col items-center px-4 py-1 rounded-lg border border-cyan-200 bg-cyan-50 text-[11px] font-semibold text-codizulca-cyan hover:bg-cyan-100"
               >
-                <Plus size={14} /> Nuevo Pedido
+                <Plus size={14} /> <span>Nuevo Pedido</span>
               </button>
               <button
                 onClick={() => setText(EJEMPLO)}
@@ -233,13 +268,15 @@ export const Ventas: React.FC = () => {
             className="mt-3 w-full flex items-center justify-center gap-2 rounded-xl bg-codizulca-red py-3 text-sm font-bold text-white shadow-md shadow-red-200 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
           >
             {parsing ? (
-              <>
-                <Loader2 size={16} className="animate-spin" /> Procesando...
-              </>
+              <span key="parsing-state" className="inline-flex items-center justify-center gap-2">
+                <Loader2 size={16} className="animate-spin" />
+                <span>Procesando...</span>
+              </span>
             ) : (
-              <>
-                Extraer Datos <ArrowRight size={16} />
-              </>
+              <span key="idle-state" className="inline-flex items-center justify-center gap-2">
+                <span>Extraer Datos</span>
+                <ArrowRight size={16} />
+              </span>
             )}
           </button>
 
@@ -262,7 +299,7 @@ export const Ventas: React.FC = () => {
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
           <div className="flex items-center justify-between pb-3 border-b border-slate-200 mb-3">
             <h2 className="flex items-center gap-2 text-[11px] font-extrabold tracking-wide text-slate-800 uppercase">
-              <History size={14} className="text-codizulca-red" /> Historial reciente (últimos 10)
+              <History size={14} className="text-codizulca-red" /> <span>Historial reciente (últimos 10)</span>
             </h2>
             <Settings size={14} className="text-slate-400" />
           </div>
@@ -299,21 +336,30 @@ export const Ventas: React.FC = () => {
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm min-h-[700px] flex flex-col">
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
           <h2 className="flex items-center gap-2 text-[11px] font-extrabold tracking-wide text-slate-800 uppercase">
-            <FileText size={14} className="text-codizulca-red" /> Formato de Facturación
+            <FileText size={14} className="text-codizulca-red" /> <span>Formato de Facturación</span>
           </h2>
           <div className="flex gap-2">
             <button
               onClick={handleManual}
               className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
             >
-              <Pencil size={12} className="text-codizulca-red" /> Llenar Manualmente
+              <Pencil size={12} className="text-codizulca-red" /> <span>Llenar Manualmente</span>
             </button>
             <button
               onClick={handleSend}
               disabled={!canSend}
               className="flex items-center gap-1.5 rounded-lg bg-codizulca-red px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {sending ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />} Enviar a Bandeja
+              {sending ? (
+                <span key="sending-icon" className="inline-flex items-center">
+                  <Loader2 size={12} className="animate-spin" />
+                </span>
+              ) : (
+                <span key="save-icon" className="inline-flex items-center">
+                  <Save size={12} />
+                </span>
+              )}
+              <span>Enviar a Bandeja</span>
             </button>
           </div>
         </div>
@@ -324,13 +370,15 @@ export const Ventas: React.FC = () => {
               notice.type === 'ok' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'
             }`}
           >
-            {notice.type === 'ok' ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
-            {notice.text}
+            <span className="inline-flex shrink-0">
+              {notice.type === 'ok' ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
+            </span>
+            <span>{notice.text}</span>
           </div>
         )}
 
         {draft ? (
-          <div className="p-4 overflow-x-auto">
+          <div key="draft-form-view" className="p-4 overflow-x-auto">
             {hasRestoredDraft && (
               <div className="mb-3 px-3.5 py-2 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between text-xs text-emerald-800">
                 <div className="flex items-center gap-2">
@@ -350,14 +398,14 @@ export const Ventas: React.FC = () => {
             </div>
           </div>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center gap-4 text-center px-6">
+          <div key="draft-empty-view" className="flex-1 flex flex-col items-center justify-center gap-4 text-center px-6">
             <ClipboardList size={44} className="text-slate-200" />
             <p className="text-xs text-slate-500">Los datos procesados se mostrarán en formato de planilla aquí.</p>
             <button
               onClick={handleManual}
               className="flex items-center gap-2 rounded-xl border border-slate-800 px-5 py-2 text-xs font-bold text-slate-800 hover:bg-slate-50"
             >
-              <Pencil size={14} className="text-codizulca-red" /> Llenar / Editar Formato Manualmente
+              <Pencil size={14} className="text-codizulca-red" /> <span>Llenar / Editar Formato Manualmente</span>
             </button>
           </div>
         )}

@@ -265,7 +265,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   parseOrderWithAI: async (text) => {
-    set({ loading: true, error: null });
+    set({ error: null });
     try {
       const response = await apiFetch('/api/parse-order', {
         method: 'POST',
@@ -273,11 +273,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         body: JSON.stringify({ text })
       });
       if (!response.ok) throw new Error('AI Parsing failed');
-      const data = await response.json();
-      set({ loading: false });
-      return data;
+      return await response.json();
     } catch (err: any) {
-      set({ error: err.message, loading: false });
+      set({ error: err.message });
       throw err;
     }
   }
