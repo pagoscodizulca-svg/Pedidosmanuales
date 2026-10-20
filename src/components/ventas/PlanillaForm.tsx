@@ -73,6 +73,21 @@ export const emptyRow = (): ArticuloItem => ({
 export const isRowEmpty = (a: ArticuloItem) =>
   !a?.descripcion?.trim() && !a?.codigo?.trim() && !Number(a?.cantidad_solicitada);
 
+const UNIDADES = ['UNIDAD', 'BULTO', 'PIEZA', 'KG'];
+
+const UNIT_NORMALIZE_MAP: Record<string, string> = {
+  KG: 'KG', KGS: 'KG', KILO: 'KG', KILOS: 'KG',
+  UND: 'UNIDAD', UNID: 'UNIDAD', UNI: 'UNIDAD', UNIDAD: 'UNIDAD', UNIDADES: 'UNIDAD', UN: 'UNIDAD',
+  BTO: 'BULTO', BTOS: 'BULTO', BULTO: 'BULTO', BULTOS: 'BULTO',
+  PZA: 'PIEZA', PZAS: 'PIEZA', PZ: 'PIEZA', PIEZA: 'PIEZA', PIEZAS: 'PIEZA',
+};
+
+export const normalizeUnidadMedida = (raw?: string): string => {
+  if (!raw) return '';
+  const clean = raw.trim().toUpperCase().replace(/\./g, '');
+  return UNIT_NORMALIZE_MAP[clean] || (UNIDADES.includes(clean) ? clean : '');
+};
+
 /** Normaliza los artículos y completa hasta los 15 renglones estándar. */
 export const padRows = (arts: Partial<ArticuloItem>[] = []): ArticuloItem[] => {
   const safeArts = Array.isArray(arts) ? arts : [];
@@ -101,7 +116,7 @@ export const padRows = (arts: Partial<ArticuloItem>[] = []): ArticuloItem[] => {
       ...a,
       codigo,
       descripcion,
-      unidad_medida: (a?.unidad_medida || '').toUpperCase(),
+      unidad_medida: normalizeUnidadMedida(a?.unidad_medida),
       cantidad_solicitada: cant,
       precio_unitario: precio,
       sub_total: round2(cant * precio),
@@ -113,8 +128,6 @@ export const padRows = (arts: Partial<ArticuloItem>[] = []): ArticuloItem[] => {
 
 export const calcTotal = (arts: ArticuloItem[] = []) =>
   round2((arts || []).reduce((sum, a) => sum + (Number(a?.sub_total) || 0), 0));
-
-const UNIDADES = ['UND', 'KG', 'BTOS', 'CAJAS', 'PAQ', 'LTS'];
 
 interface PlanillaFormProps {
   value: OrderData;

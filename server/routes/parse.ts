@@ -129,12 +129,20 @@ function enrichOrderWithProducts(order: Partial<OrderData>) {
 
 const UNIT_MAP: Record<string, string> = {
   kg: 'KG', kgs: 'KG', kilo: 'KG', kilos: 'KG',
-  und: 'UND', unid: 'UND', unidad: 'UND', unidades: 'UND', un: 'UND',
-  bto: 'BTOS', btos: 'BTOS', bulto: 'BTOS', bultos: 'BTOS',
-  caja: 'CAJAS', cajas: 'CAJAS', cj: 'CAJAS', cjs: 'CAJAS',
-  paq: 'PAQ', paquete: 'PAQ', paquetes: 'PAQ', pqt: 'PAQ',
-  lt: 'LTS', lts: 'LTS', litro: 'LTS', litros: 'LTS',
+  und: 'UNIDAD', unid: 'UNIDAD', uni: 'UNIDAD', unidad: 'UNIDAD', unidades: 'UNIDAD', un: 'UNIDAD',
+  bto: 'BULTO', btos: 'BULTO', bulto: 'BULTO', bultos: 'BULTO',
+  pza: 'PIEZA', pzas: 'PIEZA', pz: 'PIEZA', pieza: 'PIEZA', piezas: 'PIEZA',
 };
+
+const ALLOWED_UNITS = new Set(['UNIDAD', 'BULTO', 'PIEZA', 'KG']);
+
+function normalizeUnidad(raw?: string): string {
+  if (!raw) return '';
+  const clean = raw.trim().toLowerCase().replace(/\./g, '');
+  if (UNIT_MAP[clean]) return UNIT_MAP[clean];
+  const upper = clean.toUpperCase();
+  return ALLOWED_UNITS.has(upper) ? upper : '';
+}
 
 const today = () => new Date().toLocaleDateString('en-CA');
 const num = (s?: string) => (s ? Number(s.replace(',', '.')) || 0 : 0);
@@ -200,7 +208,7 @@ Devuelve EXCLUSIVAMENTE un objeto JSON con este esquema:
   "articulos": [
     {
       "cantidad_solicitada": number,
-      "unidad_medida": "UND" | "KG" | "BTOS" | "CAJAS" | "PAQ" | "LTS" | "",
+      "unidad_medida": "UNIDAD" | "BULTO" | "PIEZA" | "KG" | "",
       "codigo": string (código entre corchetes o numérico si existe),
       "descripcion": string (en MAYÚSCULAS),
       "precio_unitario": number (0 si no se indica)
@@ -395,7 +403,7 @@ ${text}
     (parsed.articulos || []).forEach((art: any) => {
       art.cantidad_solicitada = Number(art.cantidad_solicitada) || 0;
       art.precio_unitario = Number(art.precio_unitario) || 0;
-      art.unidad_medida = (art.unidad_medida || '').toUpperCase();
+      art.unidad_medida = normalizeUnidad(art.unidad_medida);
       art.sub_total = Math.round(art.cantidad_solicitada * art.precio_unitario * 100) / 100;
     });
     enrichOrderWithClient(parsed);
