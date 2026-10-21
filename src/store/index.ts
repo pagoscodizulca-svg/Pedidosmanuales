@@ -60,7 +60,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   error: null,
   
   fetchHistory: async () => {
-    set({ loading: true, error: null });
+    const isInitial = get().historyOrders.length === 0;
+    if (isInitial) set({ loading: true, error: null });
     try {
       const response = await apiFetch('/api/orders/history');
       if (!response.ok) throw new Error('Failed to fetch history');
@@ -72,7 +73,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   fetchOrders: async () => {
-    set({ loading: true, error: null });
+    const isInitial = get().orders.length === 0;
+    if (isInitial) set({ loading: true, error: null });
     try {
       const response = await apiFetch('/api/orders');
       if (!response.ok) throw new Error('Failed to fetch orders');
@@ -84,7 +86,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   
   createOrder: async (orderData) => {
-    set({ loading: true, error: null });
+    set({ error: null });
     try {
       const { username, department } = getCurrentUserActor();
       const newOrder: Omit<DbOrder, 'id' | 'statusHistory'> = {
@@ -109,10 +111,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         throw new Error(errorData.error || 'Failed to create order');
       }
       const created = await response.json();
-      set({ orders: [...get().orders, created], loading: false });
+      const exists = get().orders.some(o => o.id === created.id);
+      set({ orders: exists ? get().orders.map(o => o.id === created.id ? created : o) : [created, ...get().orders] });
       return created;
     } catch (err: any) {
-      set({ error: err.message, loading: false });
+      set({ error: err.message });
       throw err;
     }
   },
@@ -136,7 +139,12 @@ export const useAppStore = create<AppState>((set, get) => ({
           body: JSON.stringify({ orderData, status: newStatus, historyItem })
        });
        if (!response.ok) throw new Error('Error al actualizar pedido');
-       get().fetchOrders();
+       const updated = await response.json().catch(() => null);
+       if (updated && updated.id) {
+         set({ orders: get().orders.map(o => o.id === id ? updated : o) });
+       } else {
+         await get().fetchOrders();
+       }
     } catch(err) {
        console.error(err);
     }

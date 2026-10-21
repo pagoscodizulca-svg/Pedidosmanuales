@@ -10,7 +10,7 @@ import { printMultipleOrders } from '../lib/pdfUtils';
 import { VENDEDORES } from '../data/vendedores';
 
 export const CXC: React.FC = () => {
-  const { orders, fetchOrders, updateOrderStatus, updateSupervisor, loading } = useAppStore();
+  const { orders, fetchOrders, updateOrderStatus, updateBatchOrderStatus, updateSupervisor, loading } = useAppStore();
   
   // Tabs & Filters
   const [activeTab, setActiveTab] = useState<'PENDIENTES' | 'PROCESADOS' | 'RECHAZADOS'>('PENDIENTES');
@@ -113,9 +113,7 @@ export const CXC: React.FC = () => {
   const handleAprobarLote = async () => {
     if (selectedIds.size === 0) return;
     if (confirm(`¿Aprobar ${selectedIds.size} pedidos y enviarlos a facturación?`)) {
-      for (const id of selectedIds) {
-        await updateOrderStatus(id, 'PENDIENTE_FACTURACION');
-      }
+      await updateBatchOrderStatus(Array.from(selectedIds), 'PENDIENTE_FACTURACION', 'Cuentas por Cobrar');
       setSelectedIds(new Set());
     }
   };
@@ -306,7 +304,7 @@ export const CXC: React.FC = () => {
         </div>
 
         {/* Cards List */}
-        {loading ? (
+        {loading && orders.length === 0 ? (
           <p className="text-slate-500 text-sm">Cargando pedidos...</p>
         ) : filteredOrders.length === 0 ? (
           <div className="bg-slate-50 rounded-xl border border-dashed border-slate-300 p-8 text-center text-slate-500 text-sm">

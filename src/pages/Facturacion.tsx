@@ -377,7 +377,7 @@ export const Facturacion: React.FC = () => {
           </div>
         </div>
 
-        {loading ? (
+        {loading && orders.length === 0 ? (
           <p className="text-slate-500 text-sm">Cargando pedidos...</p>
         ) : filteredOrders.length === 0 ? (
           <div className="bg-slate-50 rounded-xl border border-dashed border-slate-300 p-8 text-center text-slate-500 text-sm">

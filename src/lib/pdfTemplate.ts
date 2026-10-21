@@ -101,7 +101,7 @@ export const generateOrderHtml = (order: DbOrder, withHistory: boolean = false) 
             <td colspan="2" rowspan="2" class="text-center" style="font-size: 9px; color: #888; vertical-align: top;">APROBACIÓN CXC</td>
           </tr>
           <tr>
-            <td colspan="5" class="text-left uppercase">CANTIDAD DE CESTAS: -</td>
+            <td colspan="5" class="text-left uppercase">CANTIDAD DE CESTAS: ${o.cantidad_cestas ?? '-'}</td>
             <td colspan="1" class="text-left uppercase"></td>
           </tr>
         </tbody>
@@ -115,23 +115,27 @@ export const generateOrderHtml = (order: DbOrder, withHistory: boolean = false) 
 export const getPrintStyles = () => `
   <style>
     @media print {
-      @page { margin: 0.5cm; size: portrait; }
-      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-      .page-break { page-break-after: always; margin-bottom: 0; border: none; padding: 0; }
+      @page { margin: 0.4cm; size: portrait; }
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; padding: 0 !important; margin: 0 !important; }
+      .print-container { margin: 0 auto !important; page-break-inside: avoid; break-inside: avoid; }
+      .page-break { page-break-after: always; break-after: page; margin-bottom: 0 !important; border: none !important; padding-bottom: 0 !important; }
+      .page-break:last-child { page-break-after: auto; break-after: auto; }
     }
     body {
       font-family: Arial, sans-serif;
       font-size: 10px;
       margin: 0;
-      padding: 20px;
+      padding: 16px;
       color: #000;
     }
     .print-container {
       max-width: 900px;
-      margin: 0 auto 40px auto;
+      margin: 0 auto 24px auto;
+      page-break-inside: avoid;
+      break-inside: avoid;
     }
-    .page-break { margin-bottom: 40px; border-bottom: 2px dashed #ccc; padding-bottom: 40px; }
-    .page-break:last-child { page-break-after: auto; border-bottom: none; }
+    .page-break { margin-bottom: 24px; border-bottom: 2px dashed #ccc; padding-bottom: 24px; }
+    .page-break:last-child { page-break-after: auto; border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
     
     .header-box {
       display: flex;
@@ -147,11 +151,11 @@ export const getPrintStyles = () => `
     .title-cell { flex: 1; }
     .border-top { border-top: 2px solid #000; }
     
-    .title-logo { font-size: 24px; font-weight: 900; margin: 0; line-height: 1; letter-spacing: -1px; }
+    .title-logo { font-size: 22px; font-weight: 900; margin: 0; line-height: 1; letter-spacing: -1px; }
     .rif { font-size: 9px; font-weight: bold; }
     
-    .label { flex: 0 0 40%; border-right: 2px solid #000; padding: 4px 8px; font-size: 9px; }
-    .value { flex: 1; padding: 4px 8px; text-align: right; }
+    .label { flex: 0 0 40%; border-right: 2px solid #000; padding: 3px 6px; font-size: 9px; }
+    .value { flex: 1; padding: 3px 6px; text-align: right; }
     
     .main-table {
       width: 100%;
@@ -160,7 +164,7 @@ export const getPrintStyles = () => `
     }
     .main-table th, .main-table td {
       border: 1px solid #000;
-      padding: 5px 4px;
+      padding: 3.5px 4px;
     }
     .main-table th {
       font-size: 9px;
@@ -180,7 +184,9 @@ export const getPrintStyles = () => `
     .red-text { color: #d32f2f !important; }
     .uppercase { text-transform: uppercase; }
     
-    .history { margin-top: 20px; font-size: 11px; border-top: 1px solid #ccc; padding-top: 10px; }
-    .history-item { margin-bottom: 4px; }
+    .history { margin-top: 10px; font-size: 9.5px; border-top: 1px solid #ccc; padding-top: 6px; page-break-inside: avoid; break-inside: avoid; }
+    .history h3 { margin: 0 0 4px 0; font-size: 10px; }
+    .history ul { margin: 0; padding-left: 16px; }
+    .history-item { margin-bottom: 2px; }
   </style>
 `;
