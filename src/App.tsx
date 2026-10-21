@@ -50,6 +50,22 @@ function App() {
     // Supabase Realtime Subscription (Escuchar INSERTS y UPDATES en tiempo real)
     const channel = supabase.channel('realtime_orders')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (payload: any) => {
+         const row = payload.new || {};
+         const rowId = String(row.id || '').trim().toLowerCase();
+         const rowNum = String(row.numero_pedido || row.raw_order?.numero_pedido || '').trim();
+         const rowObs = String(row.observaciones || row.raw_order?.observaciones || '').toUpperCase();
+         if (
+           rowId.startsWith('test-int-') ||
+           rowId.startsWith('test-qa-') ||
+           rowNum === '9999' ||
+           rowObs.includes('OC-TEST-INT') ||
+           rowObs.includes('PRUEBA DE INTEGRAC')
+         ) {
+           // Ignorar y disparar limpieza silenciosa en el backend sin notificar ni mostrar el pedido de prueba
+           debouncedFetchOrders();
+           return;
+         }
+
          if (payload.eventType === 'INSERT') {
            const cliente = payload.new?.cliente || payload.new?.order_data?.cliente || 'Nuevo Pedido';
            const newStatus = payload.new?.status;

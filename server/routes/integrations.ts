@@ -99,6 +99,20 @@ router.post('/fdv', authenticateAPIKey, async (req, res) => {
 
     for (let index = 0; index < ordersToProcess.length; index++) {
       const rawOrder = ordersToProcess[index];
+      const rawId = String(rawOrder.id || rawPayload.id || '').trim().toLowerCase();
+      const rawNum = String(rawOrder.numero_pedido || rawPayload.numero_pedido || '').trim();
+      const rawObs = String(rawOrder.observaciones || rawPayload.observaciones || '').toUpperCase();
+      const rawOc = String(rawOrder.orden_compra || rawPayload.orden_compra || rawPayload.numero_oc || '').toUpperCase();
+      if (
+        rawId.startsWith('test-int-') ||
+        rawNum === '9999' ||
+        rawObs.includes('OC-TEST-INT') ||
+        rawObs.includes('PRUEBA DE INTEGRAC') ||
+        rawOc.includes('OC-TEST-INT')
+      ) {
+        continue;
+      }
+
       const clienteName = (rawOrder.cliente || `PEDIDO CADENA #${index + 1}`).trim().toUpperCase();
       const articulos = Array.isArray(rawOrder.articulos) ? rawOrder.articulos : [];
       const cadena = detectarCadena(clienteName, rawOrder.origen || rawPayload.origen);
@@ -176,6 +190,16 @@ router.post('/fdv', authenticateAPIKey, async (req, res) => {
         id_cliente: idCliente,
         total: orderData.total_pedido,
         items: articulos.length
+      });
+    }
+
+    if (insertedRows.length === 0) {
+      return res.status(200).json({
+        success: true,
+        ignored: true,
+        message: 'Pedidos de prueba QA ignorados.',
+        pedidos_procesados: 0,
+        detalle: []
       });
     }
 

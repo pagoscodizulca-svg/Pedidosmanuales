@@ -7,6 +7,23 @@ const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+function isTestOrGhostOrder(row: any): boolean {
+  if (!row) return false;
+  const id = String(row.id || '').trim().toLowerCase();
+  const num = String(row.numero_pedido ?? row.order?.numero_pedido ?? '').trim();
+  const obs = String(row.observaciones ?? row.order?.observaciones ?? '').toUpperCase();
+  const cli = String(row.cliente ?? row.order?.cliente ?? '').toUpperCase();
+  const arts = Array.isArray(row.articulos) ? row.articulos : (Array.isArray(row.order?.articulos) ? row.order.articulos : []);
+
+  if (id.startsWith('test-int-') || id.startsWith('test-qa-')) return true;
+  if (num === '9999') return true;
+  if (obs.includes('OC-TEST-INT') || obs.includes('PRUEBA DE INTEGRAC')) return true;
+  if (cli.includes('ALKOSTO 01 - ZONA INDUSTRIAL') && arts.length === 1 && Number(arts[0]?.cantidad_solicitada) === 0) {
+    return true;
+  }
+  return false;
+}
+
 function mapSupabaseToDbOrder(row: any): DbOrder {
   return {
     id: row.id,
@@ -143,11 +160,22 @@ router.get('/', async (req, res) => {
       
     if (error) throw error;
     
-    const orders = (data || []).map(row => {
-      const o = mapSupabaseToDbOrder(row);
-      o.isArchived = false;
-      return o;
-    });
+    const allRows = data || [];
+    const ghostIds = allRows.filter(isTestOrGhostOrder).map(r => r.id).filter(Boolean);
+    if (ghostIds.length > 0) {
+      // Auto-purgar pedidos fantasma de pruebas QA externas en segundo plano
+      supabase.from('orders').delete().in('id', ghostIds).then(({ error: delErr }) => {
+        if (delErr) console.error('Error auto-deleting ghost test orders:', delErr);
+      });
+    }
+
+    const orders = allRows
+      .filter(row => !isTestOrGhostOrder(row))
+      .map(row => {
+        const o = mapSupabaseToDbOrder(row);
+        o.isArchived = false;
+        return o;
+      });
     res.json(orders);
   } catch (err: any) {
     console.error('Error fetching from Supabase:', err);
@@ -182,11 +210,13 @@ router.get('/history', async (req, res) => {
       }
     }
     
-    const orders = allData.map(row => {
-      const o = mapSupabaseToDbOrder(row);
-      o.isArchived = true;
-      return o;
-    });
+    const orders = allData
+      .filter(row => !isTestOrGhostOrder(row))
+      .map(row => {
+        const o = mapSupabaseToDbOrder(row);
+        o.isArchived = true;
+        return o;
+      });
     res.json(orders);
   } catch (err: any) {
     console.error('Error fetching history:', err);
@@ -198,6 +228,10 @@ router.get('/history', async (req, res) => {
 router.post('/', async (req, res) => {
   const newOrder: DbOrder = req.body;
   const userRole = getUserRole(req);
+
+  if (isTestOrGhostOrder(newOrder)) {
+    return res.status(200).json({ ignored: true, message: 'Pedido de prueba QA ignorado.' });
+  }
 
   // Validación de rol: solo ventas, gerencia o master pueden emitir pedidos nuevos
   if (!['ventas', 'gerencia', 'master'].includes(userRole)) {

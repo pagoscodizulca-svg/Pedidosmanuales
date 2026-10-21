@@ -53,6 +53,35 @@ interface AppState {
   parseOrderWithAI: (text: string) => Promise<Partial<OrderData>>;
 }
 
+function isGhostTestOrder(o: DbOrder): boolean {
+  if (!o) return false;
+  const id = String(o.id || '').trim().toLowerCase();
+  const num = String(o.order?.numero_pedido || '').trim();
+  const obs = String(o.order?.observaciones || '').toUpperCase();
+  const cli = String(o.order?.cliente || '').toUpperCase();
+  const arts = Array.isArray(o.order?.articulos) ? o.order.articulos : [];
+
+  if (id.startsWith('test-int-') || id.startsWith('test-qa-')) return true;
+  if (num === '9999') return true;
+  if (obs.includes('OC-TEST-INT') || obs.includes('PRUEBA DE INTEGRAC')) return true;
+  if (cli.includes('ALKOSTO 01 - ZONA INDUSTRIAL') && arts.length === 1 && Number(arts[0]?.cantidad_solicitada) === 0) {
+    return true;
+  }
+  return false;
+}
+
+function dedupeAndFilterOrders(list: DbOrder[]): DbOrder[] {
+  const seen = new Set<string>();
+  const result: DbOrder[] = [];
+  for (const item of list || []) {
+    if (!item || !item.id || isGhostTestOrder(item)) continue;
+    if (seen.has(item.id)) continue;
+    seen.add(item.id);
+    result.push(item);
+  }
+  return result;
+}
+
 export const useAppStore = create<AppState>((set, get) => ({
   orders: [],
   historyOrders: [],
@@ -66,7 +95,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const response = await apiFetch('/api/orders/history');
       if (!response.ok) throw new Error('Failed to fetch history');
       const data = await response.json();
-      set({ historyOrders: data, loading: false });
+      set({ historyOrders: dedupeAndFilterOrders(data), loading: false });
     } catch (err: any) {
       set({ error: err.message, loading: false });
     }
@@ -79,7 +108,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const response = await apiFetch('/api/orders');
       if (!response.ok) throw new Error('Failed to fetch orders');
       const data = await response.json();
-      set({ orders: data, loading: false });
+      set({ orders: dedupeAndFilterOrders(data), loading: false });
     } catch (err: any) {
       set({ error: err.message, loading: false });
     }
