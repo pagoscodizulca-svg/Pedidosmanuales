@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { createClient } from '@supabase/supabase-js';
-import { DbOrder, OrderStatus, StatusHistoryItem } from '../../src/types.js';
+import { DbOrder, OrderStatus } from '../../src/types.js';
 
 const router = Router();
 const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
@@ -70,7 +70,7 @@ function getUserName(req: any): string {
 
 // Generador atómico y secuencial de correlativos sin colisiones
 async function getNextCorrelativo(): Promise<string> {
-  const { data, error } = await supabase
+  const { data } = await supabase
     .from('orders')
     .select('numero_pedido, created_at')
     .order('created_at', { ascending: false })

@@ -1,5 +1,5 @@
 import { apiFetch } from '../utils/api';
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Database, CalendarDays, Users, Award, TrendingUp, Activity, Layers, AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
 import { ProductDashboardModal } from '../components/shared/ProductDashboardModal';
 import {
@@ -38,20 +38,8 @@ export const Auditoria: React.FC = () => {
 
   useEffect(() => {
     fetchAnalytics();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const weeklyData = useMemo(() => {
-    if (!data) return [];
-    const base = data.kpis?.montoFacturado > 0 ? data.kpis.montoFacturado / 5 : 50000;
-    return [
-      { week: 'Sem. 36', Maracaibo: base * 0.8, Valencia: 0 },
-      { week: 'Sem. 37', Maracaibo: base * 1.5, Valencia: 0 },
-      { week: 'Sem. 38', Maracaibo: base * 1.6, Valencia: 0 },
-      { week: 'Sem. 39', Maracaibo: base * 0.3, Valencia: 0 },
-      { week: 'Sem. 40', Maracaibo: base * 0.4, Valencia: 0 },
-      { week: 'Sem. 41', Maracaibo: base * 0.3, Valencia: 0 },
-    ];
-  }, [data]);
 
   if (loading && !data) {
     return (
@@ -152,7 +140,7 @@ export const Auditoria: React.FC = () => {
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
           <div className="absolute top-0 right-0 p-4 opacity-10 text-codizulca-cyan"><Award size={48} /></div>
           <p className="text-xs font-bold text-slate-500 uppercase mb-1">Monto Total Facturado</p>
-          <p className="text-3xl font-black text-slate-800">$\{kpis.montoFacturado.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+          <p className="text-3xl font-black text-slate-800">${kpis.montoFacturado.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
           <div className="mt-2 text-[10px] font-bold text-cyan-600 bg-cyan-50 w-fit px-2 py-0.5 rounded border border-cyan-100">
             Ingreso Bruto Aprobado
           </div>
@@ -161,7 +149,7 @@ export const Auditoria: React.FC = () => {
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
           <div className="absolute top-0 right-0 p-4 opacity-10 text-amber-500"><TrendingUp size={48} /></div>
           <p className="text-xs font-bold text-slate-500 uppercase mb-1">Monto en CxC / Pendiente</p>
-          <p className="text-3xl font-black text-slate-800">$\{kpis.montoPendiente.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+          <p className="text-3xl font-black text-slate-800">${kpis.montoPendiente.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
           <div className="mt-2 text-[10px] font-bold text-amber-600 bg-amber-50 w-fit px-2 py-0.5 rounded border border-amber-100">
             En tránsito
           </div>
@@ -309,7 +297,7 @@ export const Auditoria: React.FC = () => {
                 <div className="mt-2 flex gap-3 text-xs font-bold text-indigo-700">
                   <span>{topByVolumen.volumen.toLocaleString()} {topByVolumen.unidad}</span>
                   <span>|</span>
-                  <span>$\{topByVolumen.monto.toLocaleString('en-US', {minimumFractionDigits:2})}</span>
+                  <span>${topByVolumen.monto.toLocaleString('en-US', {minimumFractionDigits:2})}</span>
                 </div>
               </div>
             )}
@@ -320,7 +308,7 @@ export const Auditoria: React.FC = () => {
                 <div className="mt-2 flex gap-3 text-xs font-bold text-emerald-700">
                   <span>{topByFrecuencia.pedidos} pedidos</span>
                   <span>|</span>
-                  <span>$\{topByFrecuencia.monto.toLocaleString('en-US', {minimumFractionDigits:2})}</span>
+                  <span>${topByFrecuencia.monto.toLocaleString('en-US', {minimumFractionDigits:2})}</span>
                 </div>
               </div>
             )}

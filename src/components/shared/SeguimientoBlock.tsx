@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { SeguimientoTable } from './SeguimientoTable';
 import { Printer } from 'lucide-react';
 import { DbOrder } from '../../types';
-import { useAppStore } from '../../store/index';
 import { generateConsolidatedReport, printMultipleOrders } from '../../lib/pdfUtils';
 
 interface SeguimientoBlockProps {
@@ -11,7 +10,6 @@ interface SeguimientoBlockProps {
 }
 
 export const SeguimientoBlock: React.FC<SeguimientoBlockProps> = ({ orders, hideTitle }) => {
-  const { fetchOrders } = useAppStore();
   const [searchTerm, setSearchTerm] = useState('');
   const [correlativoTerm, setCorrelativoTerm] = useState('');
   const [dateFrom, setDateFrom] = useState('');

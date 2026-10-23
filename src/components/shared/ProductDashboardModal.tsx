@@ -8,6 +8,20 @@ interface ProductDashboardModalProps {
   onClose: () => void;
 }
 
+const CustomTooltip = ({ active, payload, label }: any) => {
+  if (active && payload && payload.length) {
+    const data = payload[0].payload;
+    return (
+      <div className="bg-white p-3 rounded-lg shadow-lg border border-slate-100">
+        <p className="text-sm font-bold text-slate-800 mb-1">{label}</p>
+        <p className="text-xs text-slate-600 mb-1"><span className="font-semibold">Interacciones/Pedidos:</span> {data.pedidos}</p>
+        <p className="text-xs text-emerald-600"><span className="font-semibold">Precio Negociado (Promedio):</span> ${data.precioPromedio.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+      </div>
+    );
+  }
+  return null;
+};
+
 export const ProductDashboardModal: React.FC<ProductDashboardModalProps> = ({ productName, onClose }) => {
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -28,20 +42,6 @@ export const ProductDashboardModal: React.FC<ProductDashboardModalProps> = ({ pr
     };
     fetchData();
   }, [productName]);
-
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (active && payload && payload.length) {
-      const data = payload[0].payload;
-      return (
-        <div className="bg-white p-3 rounded-lg shadow-lg border border-slate-100">
-          <p className="text-sm font-bold text-slate-800 mb-1">{label}</p>
-          <p className="text-xs text-slate-600 mb-1"><span className="font-semibold">Interacciones/Pedidos:</span> {data.pedidos}</p>
-          <p className="text-xs text-emerald-600"><span className="font-semibold">Precio Negociado (Promedio):</span> \${data.precioPromedio.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-        </div>
-      );
-    }
-    return null;
-  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">

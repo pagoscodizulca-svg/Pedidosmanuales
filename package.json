@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@google/genai": "^2.27.0",
+    "@oxlint/binding-win32-x64-msvc": "^1.89.0",
     "@supabase/supabase-js": "^2.117.2",
     "@tailwindcss/vite": "^4.3.3",
     "@types/cors": "^2.8.19",
@@ -47,5 +48,9 @@
   },
   "devDependencies": {
     "oxlint": "^1.81.0"
+  },
+  "optionalDependencies": {
+    "lightningcss": "^1.33.0",
+    "lightningcss-win32-x64-msvc": "^1.33.0"
   }
 }

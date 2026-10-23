@@ -38,7 +38,7 @@ async function checkAndSeedSupabase() {
       }
       console.log('[clientes] Sincronización automática a Supabase completada con éxito.');
     }
-  } catch (err) {
+  } catch {
     // Si la tabla no existe en el schema cache, ignorar
   }
 }
@@ -60,7 +60,7 @@ router.get('/', async (req, res) => {
       );
       return res.json(filtered);
     }
-  } catch (err) {
+  } catch {
     // Silently fallback to local
   }
 
@@ -79,13 +79,13 @@ router.get('/', async (req, res) => {
 });
 
 // GET /api/clientes/count - Cantidad total de clientes
-router.get('/count', async (req, res) => {
+router.get('/count', async (_req, res) => {
   try {
     const { count, error } = await supabase.from('clientes').select('*', { count: 'exact', head: true });
     if (!error && typeof count === 'number' && count > 0) {
       return res.json({ count, source: 'supabase' });
     }
-  } catch (err) {
+  } catch {
     // Fallback
   }
 

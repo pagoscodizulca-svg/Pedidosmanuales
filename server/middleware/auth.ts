@@ -38,7 +38,7 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
             return next();
           }
         }
-      } catch (parseErr) {
+      } catch {
         // Fall through to 401
       }
     }

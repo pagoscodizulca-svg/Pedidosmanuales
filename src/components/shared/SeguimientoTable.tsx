@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { DbOrder } from '../../types';
 import { OrderModal } from './OrderModal';
-import { Check, X, Clock, Eye } from 'lucide-react';
+import { Check, X, Eye } from 'lucide-react';
 
 interface SeguimientoTableProps {
   orders: DbOrder[];
@@ -49,7 +49,6 @@ export const SeguimientoTable: React.FC<SeguimientoTableProps> = ({ orders, sele
     
     const Node = ({ step, label, num, isLast = false, onClick, tooltip }: any) => {
       let bg = 'bg-slate-200 text-slate-500';
-      let border = 'border-slate-200';
       if (step === 'done') bg = 'bg-codizulca-cyan text-white';
       if (step === 'active') bg = 'bg-codizulca-cyan text-white ring-4 ring-cyan-100';
       if (step === 'rejected') bg = 'bg-codizulca-red text-white';

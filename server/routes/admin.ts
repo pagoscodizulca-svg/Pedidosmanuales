@@ -7,7 +7,7 @@ import { getOrders, saveOrders } from '../services/db.js';
 const router = Router();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const DATA_DIR = path.join(__dirname, '..', '..', 'data'); // going up from routes to root/data
+const DATA_DIR = path.join(__dirname, '..', 'data'); // server/data directory
 
 router.post('/monthly-close', (req, res) => {
   const orders = getOrders();
@@ -26,6 +26,9 @@ router.post('/monthly-close', (req, res) => {
   const activeOrders = orders.filter(o => !ordersToArchive.includes(o));
   
   if (ordersToArchive.length > 0) {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
     const archiveFileName = `orders_archive_${yearStr}_${monthStr}.json`;
     const archiveFilePath = path.join(DATA_DIR, archiveFileName);
     

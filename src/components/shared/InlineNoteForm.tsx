@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { PenLine } from 'lucide-react';
 
 export const QUICK_NOTE_OPTIONS = [

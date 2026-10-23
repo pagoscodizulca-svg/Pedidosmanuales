@@ -66,11 +66,7 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}): Pro
 
     const newToken = await refreshPromise;
     if (newToken) {
-      try {
-        res = await fetch(url, { ...options, headers: buildHeaders(newToken) });
-      } catch (retryErr) {
-        throw retryErr;
-      }
+      res = await fetch(url, { ...options, headers: buildHeaders(newToken) });
     }
   }
 

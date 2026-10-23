@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { OrderData, ArticuloItem } from '../../src/types.js';
+import { PRODUCTOS as CATALOGO_PRODUCTOS } from '../../src/data/productos.js';
 
 const router = Router();
 const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
@@ -44,14 +45,19 @@ try {
   const prodPath = path.resolve(__dirname, '../../src/data/productos.json');
   if (fs.existsSync(prodPath)) {
     PRODUCTOS = JSON.parse(fs.readFileSync(prodPath, 'utf8'));
-    for (const pr of PRODUCTOS) {
-      const id = pr.id_producto.trim().toUpperCase();
-      PRODUCTO_BY_ID.set(id, pr);
-      PRODUCTO_BY_ID.set(id.padStart(6, '0'), pr);
-      const n = Number(id);
-      if (!Number.isNaN(n) && n > 0) PRODUCTO_BY_NUM.set(n, pr);
-      PRODUCTO_BY_DESC.set(pr.descripcion.trim().toUpperCase(), pr);
-    }
+  } else if (Array.isArray(CATALOGO_PRODUCTOS) && CATALOGO_PRODUCTOS.length > 0) {
+    PRODUCTOS = CATALOGO_PRODUCTOS.map((p) => ({
+      id_producto: p.id,
+      descripcion: p.descripcion,
+    }));
+  }
+  for (const pr of PRODUCTOS) {
+    const id = pr.id_producto.trim().toUpperCase();
+    PRODUCTO_BY_ID.set(id, pr);
+    PRODUCTO_BY_ID.set(id.padStart(6, '0'), pr);
+    const n = Number(id);
+    if (!Number.isNaN(n) && n > 0) PRODUCTO_BY_NUM.set(n, pr);
+    PRODUCTO_BY_DESC.set(pr.descripcion.trim().toUpperCase(), pr);
   }
 } catch (e) {
   console.warn('[parse] Error cargando catálogo de productos:', e);

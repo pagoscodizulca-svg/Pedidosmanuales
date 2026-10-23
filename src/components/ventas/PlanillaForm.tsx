@@ -44,7 +44,7 @@ export const findClienteByName = (raw: string) => {
 };
 
 export const findProductoByCode = (raw: string) => {
-  const clean = raw.replace(/[\[\]]/g, '').trim().toUpperCase();
+  const clean = raw.replace(/[[\]]/g, '').trim().toUpperCase();
   if (!clean) return undefined;
   const isNum = /^\d+$/.test(clean);
   const padded = isNum ? clean.padStart(6, '0') : clean;
@@ -229,7 +229,7 @@ export const PlanillaForm: React.FC<PlanillaFormProps> = ({ value, onChange, nex
   const handleItemCodigoBlur = (idx: number) => {
     const raw = (value.articulos?.[idx]?.codigo || '').trim();
     if (!raw) return;
-    const clean = raw.replace(/[\[\]]/g, '').trim();
+    const clean = raw.replace(/[[\]]/g, '').trim();
     const isNum = /^\d+$/.test(clean);
     const padded = isNum ? clean.padStart(6, '0') : clean;
     const found = findProductoByCode(clean);

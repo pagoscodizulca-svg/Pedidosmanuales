@@ -27,22 +27,7 @@ export const SalaEsperaAlkosto: React.FC = () => {
     return pendingOrders.filter(o => (o.order?.cliente || '').toUpperCase().includes('FAMILIA'));
   }, [pendingOrders]);
 
-  const otrasOrders = useMemo(() => {
-    return pendingOrders.filter(o => {
-      const name = (o.order?.cliente || '').toUpperCase();
-      return !name.includes('ALKOSTO') && !name.includes('FAMILIA');
-    });
-  }, [pendingOrders]);
-
   // Totales acumulados
-  const totalMontoAlkosto = useMemo(() => {
-    return alkostoOrders.reduce((sum, o) => sum + Number(o.order?.total_pedido || o.order?.monto_pedido || 0), 0);
-  }, [alkostoOrders]);
-
-  const totalMontoFamilia = useMemo(() => {
-    return familiaOrders.reduce((sum, o) => sum + Number(o.order?.total_pedido || o.order?.monto_pedido || 0), 0);
-  }, [familiaOrders]);
-
   const totalMontoGeneral = useMemo(() => {
     return pendingOrders.reduce((sum, o) => sum + Number(o.order?.total_pedido || o.order?.monto_pedido || 0), 0);
   }, [pendingOrders]);

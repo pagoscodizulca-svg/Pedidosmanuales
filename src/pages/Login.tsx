@@ -32,7 +32,7 @@ export const Login: React.FC = () => {
       }
 
       login(data);
-    } catch (err: any) {
+    } catch {
       setError('Ocurrió un error al conectar con el servidor.');
     } finally {
       setIsLoading(false);

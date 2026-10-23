@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useAppStore } from '../store/index.js';
 import { DbOrder } from '../types.js';
-import { PackageCheck, PackageX, RotateCcw, Search, User, MapPin, Hash, Calendar, FileText, CheckSquare, Eye, Printer, X, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
+import { RotateCcw, Search, User, MapPin, Hash, Calendar, FileText, CheckSquare, Printer, X, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
 import { SeguimientoBlock } from '../components/shared/SeguimientoBlock';
 import { OrderModal } from '../components/shared/OrderModal';
 import { InlineNoteForm } from '../components/shared/InlineNoteForm';
@@ -59,11 +59,6 @@ export const Facturacion: React.FC = () => {
     fetchOrders();
   }, [fetchOrders]);
 
-  // Reset del límite visible al cambiar de pestaña o filtros
-  useEffect(() => {
-    setDisplayCount(PAGE_SIZE);
-  }, [activeTab, appliedFilters]);
-
   // KPIs calculados en una sola pasada eficiente (O(N)) memoizada
   const { kpiPorFacturar, kpiFacturados, kpiRechazados } = useMemo(() => {
     let porFacturar = 0;
@@ -81,8 +76,10 @@ export const Facturacion: React.FC = () => {
     return { kpiPorFacturar: porFacturar, kpiFacturados: facturados, kpiRechazados: rechazados };
   }, [orders]);
 
-  const ejecutarBusqueda = () =>
+  const ejecutarBusqueda = () => {
+    setDisplayCount(PAGE_SIZE);
     setAppliedFilters({ vendedor: filterVendedor, zona: filterZona, cliente: filterCliente, correlativo: filterCorrelativo, dateFrom, dateTo });
+  };
 
   const limpiarFiltros = () => {
     setFilterVendedor('');
@@ -91,11 +88,8 @@ export const Facturacion: React.FC = () => {
     setFilterCorrelativo('');
     setDateFrom('');
     setDateTo('');
+    setDisplayCount(PAGE_SIZE);
     setAppliedFilters({ vendedor: '', zona: '', cliente: '', correlativo: '', dateFrom: '', dateTo: '' });
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') ejecutarBusqueda();
   };
 
   const filteredOrders = useMemo(() => {
@@ -318,7 +312,7 @@ export const Facturacion: React.FC = () => {
           {(['POR_FACTURAR', 'FACTURADOS', 'RECHAZADOS'] as const).map(tab => (
             <button
               key={tab}
-              onClick={() => { setActiveTab(tab); setSelectedIds(new Set()); }}
+              onClick={() => { setActiveTab(tab); setDisplayCount(PAGE_SIZE); setSelectedIds(new Set()); }}
               className={`px-4 py-2 rounded-lg text-[13px] font-semibold transition-all ${
                 activeTab === tab
                   ? 'bg-white text-slate-900 shadow-sm'
