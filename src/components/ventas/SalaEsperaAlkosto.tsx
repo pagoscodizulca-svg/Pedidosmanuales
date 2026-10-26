@@ -49,9 +49,28 @@ export const SalaEsperaAlkosto: React.FC = () => {
   const [isClearingAll, setIsClearingAll] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
 
-  // Sincronizar automáticamente con la App de Alkosto de Sairú al cargar el módulo
+  // Sincronizar automáticamente con la App de Alkosto de Sairú al cargar el módulo, al recuperar foco y cada 15s
   useEffect(() => {
     syncAlkostoOrders().catch(() => {});
+
+    const interval = setInterval(() => {
+      syncAlkostoOrders().catch(() => {});
+    }, 15000);
+
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        syncAlkostoOrders().catch(() => {});
+      }
+    };
+
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+    };
   }, [syncAlkostoOrders]);
 
   const handleManualSync = async () => {

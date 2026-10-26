@@ -573,6 +573,7 @@ export function parseAndValidateChainOrders(rawPayload: unknown): BatchParseResu
     const rawClientCode =
       safeObj.id_cliente ??
       safeObj.sucursalCodigo ??
+      safeObj.sucursal_codigo ??
       safeObj.codigo_cliente ??
       safeObj.tiendaSeleccionada ??
       safeObj.sede ??
@@ -580,6 +581,7 @@ export function parseAndValidateChainOrders(rawPayload: unknown): BatchParseResu
     const rawClientName =
       safeObj.cliente ??
       safeObj.sucursalNombre ??
+      safeObj.sucursal_nombre ??
       safeObj.nombre_tienda ??
       safeObj.tienda ??
       safeObj.sucursal ??
@@ -599,7 +601,13 @@ export function parseAndValidateChainOrders(rawPayload: unknown): BatchParseResu
     }
 
     // 2. Normalizar fecha
-    const rawDate = safeObj.fecha ?? safeObj.fechaPedido ?? safeObj.fechaEntrega ?? safeObj.fechaEntregaEstimada;
+    const rawDate =
+      safeObj.fecha ??
+      safeObj.fechaPedido ??
+      safeObj.fecha_pedido ??
+      safeObj.fechaEntrega ??
+      safeObj.fecha_entrega ??
+      safeObj.fechaEntregaEstimada;
     const { date: fechaISO, hadDateWarning } = normalizeDateISO(rawDate);
     if (hadDateWarning) {
       anomalies.push(`Fecha con formato inválido ("${String(rawDate)}"); reemplazada por ${fechaISO}.`);
@@ -639,7 +647,12 @@ export function parseAndValidateChainOrders(rawPayload: unknown): BatchParseResu
       normalizedItems.reduce((acc, it) => acc + (Number(it.sub_total) || 0), 0).toFixed(2)
     );
     const declaredTotal = parseSafeNumber(
-      safeObj.total_pedido ?? safeObj.monto_pedido ?? safeObj.totalUSD ?? safeObj.totalGeneral ?? safeObj.total
+      safeObj.total_pedido ??
+      safeObj.monto_pedido ??
+      safeObj.totalUSD ??
+      safeObj.total_usd ??
+      safeObj.totalGeneral ??
+      safeObj.total
     );
 
     let finalTotal = sumSubtotals > 0 ? sumSubtotals : declaredTotal;
@@ -654,6 +667,7 @@ export function parseAndValidateChainOrders(rawPayload: unknown): BatchParseResu
     const ocNum = String(
       safeObj.orden_compra ??
       safeObj.ordenCompraAlkosto ??
+      safeObj.orden_compra_alkosto ??
       safeObj.ordenNro ??
       safeObj.numero_oc ??
       safeObj.numeroOrden ??
@@ -690,8 +704,9 @@ export function parseAndValidateChainOrders(rawPayload: unknown): BatchParseResu
     const ruta = String(safeObj.ruta ?? safeObj.vendedora ?? 'SAIRU VALLES / CUENTAS CLAVE 2').trim().toUpperCase();
     const supervisor = String(safeObj.supervisor ?? '').trim().toUpperCase();
     const chofer = String(safeObj.chofer ?? '').trim().toUpperCase();
-    const createdAt = safeObj.createdAt && !Number.isNaN(new Date(safeObj.createdAt).getTime())
-      ? new Date(safeObj.createdAt).toISOString()
+    const rawCreated = safeObj.createdAt ?? safeObj.created_at;
+    const createdAt = rawCreated && !Number.isNaN(new Date(rawCreated).getTime())
+      ? new Date(rawCreated).toISOString()
       : new Date().toISOString();
 
     const formatNote =

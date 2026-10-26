@@ -2,6 +2,33 @@ import { apiFetch } from '../utils/api';
 import { create } from 'zustand';
 import { DbOrder, OrderData, OrderStatus } from '../types.js';
 import { useAuthStore } from './auth';
+import { supabase } from '../lib/supabase';
+
+function mapDirectSupabaseRowToDbOrder(row: any): DbOrder {
+  return {
+    id: row.id,
+    status: row.status as OrderStatus,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    statusHistory: row.status_history || [],
+    rejectReason: row.reject_reason || undefined,
+    cxcNote: row.cxc_note || undefined,
+    factNote: row.fact_note || undefined,
+    isArchived: Boolean(row.is_archived),
+    order: {
+      cliente: row.cliente || '',
+      id_cliente: row.id_cliente || '',
+      ruta: row.ruta || '',
+      supervisor: row.supervisor || '',
+      chofer: row.chofer || '',
+      observaciones: row.observaciones || '',
+      fecha: row.fecha || '',
+      articulos: row.articulos || [],
+      numero_pedido: row.numero_pedido || '',
+      total_pedido: Number(row.total_pedido ?? row.monto_pedido ?? 0),
+    },
+  };
+}
 
 function getCurrentUserActor(): { username: string; department: string } {
   const user = useAuthStore.getState().user;
@@ -122,10 +149,42 @@ export const useAppStore = create<AppState>((set, get) => ({
     const isInitial = get().orders.length === 0;
     if (isInitial) set({ loading: true, error: null });
     try {
-      const response = await apiFetch('/api/orders');
-      if (!response.ok) throw new Error('Failed to fetch orders');
-      const data = await response.json();
-      set({ orders: dedupeAndFilterOrders(data), loading: false });
+      const [apiResult, directWaitingResult] = await Promise.allSettled([
+        apiFetch('/api/orders'),
+        supabase
+          .from('orders')
+          .select('*')
+          .in('status', ['POR_VALIDAR', 'ERROR_FORMATO'])
+          .order('created_at', { ascending: false })
+      ]);
+
+      const directWaitingOrders: DbOrder[] =
+        directWaitingResult.status === 'fulfilled' && Array.isArray(directWaitingResult.value.data)
+          ? directWaitingResult.value.data.map(mapDirectSupabaseRowToDbOrder)
+          : [];
+
+      if (apiResult.status === 'fulfilled' && apiResult.value.ok) {
+        const data = await apiResult.value.json();
+        const combined = [...directWaitingOrders, ...(Array.isArray(data) ? data : [])];
+        set({ orders: dedupeAndFilterOrders(combined), loading: false, error: null });
+        return;
+      }
+
+      // Fallback directo a Supabase si el backend está reiniciando o el token falló temporalmente
+      const { data: fallbackRows, error: fbError } = await supabase
+        .from('orders')
+        .select('*')
+        .is('is_archived', false)
+        .order('created_at', { ascending: false })
+        .range(0, 999);
+
+      if (fbError) throw fbError;
+      const mappedFallback = (fallbackRows || []).map(mapDirectSupabaseRowToDbOrder);
+      set({
+        orders: dedupeAndFilterOrders([...directWaitingOrders, ...mappedFallback]),
+        loading: false,
+        error: null,
+      });
     } catch (err: any) {
       set({ error: err.message, loading: false });
     }
@@ -135,11 +194,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const response = await apiFetch('/api/orders/sync-alkosto', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: true })
       });
       const data = await response.json().catch(() => ({ syncedCount: 0 }));
+      if (Array.isArray(data?.waitingOrders) && data.waitingOrders.length > 0) {
+        set({ orders: dedupeAndFilterOrders([...data.waitingOrders, ...get().orders]) });
+      }
       await get().fetchOrders();
-      return Number(data.syncedCount || 0);
+      return Number(data?.syncedCount || 0);
     } catch (err: any) {
       console.warn('Error syncing Alkosto orders:', err);
       await get().fetchOrders();

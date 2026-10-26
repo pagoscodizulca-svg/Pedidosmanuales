@@ -49,12 +49,15 @@ function isUnvalidatedExternalChainOrder(row: any): boolean {
   return false;
 }
 
-// Conexión directa vía REST API con Firestore de la App de Alkosto de Sairú (https://dashboard-fdv-planificador.onrender.com)
+// Conexión directa vía REST API con Firestore y Supabase de la App de Alkosto de Sairú (https://dashboard-fdv-planificador.onrender.com)
 const SAIRU_FIRESTORE_BASE =
   'https://firestore.googleapis.com/v1/projects/gen-lang-client-0359272213/databases/ai-studio-dashboardfdvplan-b71166f0-11d2-4bf0-8a16-d3a8accb0022/documents';
+const SAIRU_SUPABASE_PEDIDOS_URL = 'https://nudltbgyewyiklqdyujk.supabase.co/rest/v1/pedidos_alkosto';
+const SAIRU_SUPABASE_KEY =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51ZGx0Ymd5ZXd5aWtscWR5dWprIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MTgzMDA3OCwiZXhwIjoyMTA3NDA2MDc4fQ.k92vdZiuVkTzAWNK8Fq71m1Xi_MoWtpx_eRQcZTw1cA';
 const deletedAlkostoIdsMemory = new Set<string>();
 let lastSairuSyncRun = 0;
-const SAIRU_SYNC_INTERVAL_MS = 20 * 1000;
+const SAIRU_SYNC_INTERVAL_MS = 15 * 1000;
 
 function parseFirestoreVal(v: any): any {
   if (!v || typeof v !== 'object') return v;
@@ -87,13 +90,24 @@ function parseFirestoreDoc(doc: any): any {
 async function markSairuFirestoreProcessed(id: string): Promise<void> {
   if (!String(id || '').startsWith('alk-')) return;
   try {
-    await fetch(`${SAIRU_FIRESTORE_BASE}/alkosto_orders/${encodeURIComponent(id)}?updateMask.fieldPaths=estado`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fields: { estado: { stringValue: 'PROCESADO' } } })
-    });
+    await Promise.allSettled([
+      fetch(`${SAIRU_FIRESTORE_BASE}/alkosto_orders/${encodeURIComponent(id)}?updateMask.fieldPaths=estado`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields: { estado: { stringValue: 'PROCESADO' } } })
+      }),
+      fetch(`${SAIRU_SUPABASE_PEDIDOS_URL}?id=eq.${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers: {
+          apikey: SAIRU_SUPABASE_KEY,
+          Authorization: `Bearer ${SAIRU_SUPABASE_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ status: 'PROCESADO', updated_at: new Date().toISOString() })
+      })
+    ]);
   } catch (e) {
-    console.warn('Note: could not mark Alkosto order PROCESADO in Firestore:', e);
+    console.warn('Note: could not mark Alkosto order PROCESADO in external store:', e);
   }
 }
 
@@ -101,56 +115,85 @@ async function deleteFromSairuFirestore(ids: string[]): Promise<void> {
   for (const id of ids) {
     if (!String(id || '').startsWith('alk-')) continue;
     deletedAlkostoIdsMemory.add(id);
-    try {
-      await fetch(`${SAIRU_FIRESTORE_BASE}/alkosto_orders/${encodeURIComponent(id)}`, {
-        method: 'DELETE'
-      });
-    } catch (e) {
-      console.warn('Note: could not delete Alkosto order from Firestore:', e);
-    }
   }
 }
 
-async function syncSairuFirestoreToSupabase(): Promise<number> {
+async function syncSairuFirestoreToSupabase(force = false): Promise<number> {
   try {
-    const fsRes = await fetch(`${SAIRU_FIRESTORE_BASE}:runQuery`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        structuredQuery: {
-          from: [{ collectionId: 'alkosto_orders' }]
-        }
-      })
-    });
-    if (!fsRes.ok) return 0;
-
-    const rawItems = await fsRes.json();
-    if (!Array.isArray(rawItems)) return 0;
-
-    const fsDocs = rawItems
-      .filter((x: any) => x && x.document)
-      .map((x: any) => parseFirestoreDoc(x.document));
-
-    // Auto-purgar cualquier documento de prueba test-int-* en Firestore
-    const testFsDocs = fsDocs.filter(
-      (d: any) =>
-        String(d.id || '').startsWith('test-int-') ||
-        String(d.numeroPedido || '') === '9999' ||
-        String(d.ordenCompraAlkosto || '').toUpperCase().includes('OC-TEST-INT')
-    );
-    for (const td of testFsDocs) {
-      fetch(`${SAIRU_FIRESTORE_BASE}/alkosto_orders/${encodeURIComponent(td.id)}`, { method: 'DELETE' }).catch(() => {});
+    if (force) {
+      deletedAlkostoIdsMemory.clear();
     }
 
-    // Filtrar pedidos con estado ENVIADO
-    const enviados = fsDocs.filter(
-      (d: any) =>
-        !testFsDocs.includes(d) &&
-        !deletedAlkostoIdsMemory.has(d.id) &&
-        String(d.estado || '').toUpperCase() === 'ENVIADO' &&
-        d.id
-    );
+    const [fsResResult, sbResResult] = await Promise.allSettled([
+      fetch(`${SAIRU_FIRESTORE_BASE}:runQuery`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          structuredQuery: {
+            from: [{ collectionId: 'alkosto_orders' }]
+          }
+        })
+      }),
+      fetch(`${SAIRU_SUPABASE_PEDIDOS_URL}?select=*&status=eq.ENVIADO&order=created_at.desc&limit=50`, {
+        headers: {
+          apikey: SAIRU_SUPABASE_KEY,
+          Authorization: `Bearer ${SAIRU_SUPABASE_KEY}`
+        }
+      })
+    ]);
 
+    const candidateMap = new Map<string, any>();
+
+    if (fsResResult.status === 'fulfilled' && fsResResult.value.ok) {
+      const rawItems = await fsResResult.value.json().catch(() => []);
+      if (Array.isArray(rawItems)) {
+        const fsDocs = rawItems
+          .filter((x: any) => x && x.document)
+          .map((x: any) => parseFirestoreDoc(x.document));
+
+        const testFsDocs = fsDocs.filter(
+          (d: any) =>
+            String(d.id || '').startsWith('test-int-') ||
+            String(d.numeroPedido || '') === '9999' ||
+            String(d.ordenCompraAlkosto || '').toUpperCase().includes('OC-TEST-INT')
+        );
+        for (const td of testFsDocs) {
+          fetch(`${SAIRU_FIRESTORE_BASE}/alkosto_orders/${encodeURIComponent(td.id)}`, { method: 'DELETE' }).catch(() => {});
+        }
+
+        for (const d of fsDocs) {
+          if (
+            !testFsDocs.includes(d) &&
+            d.id &&
+            String(d.estado || '').toUpperCase() === 'ENVIADO' &&
+            (force || !deletedAlkostoIdsMemory.has(d.id))
+          ) {
+            candidateMap.set(d.id, d);
+          }
+        }
+      }
+    }
+
+    if (sbResResult.status === 'fulfilled' && sbResResult.value.ok) {
+      const sbDocs = await sbResResult.value.json().catch(() => []);
+      if (Array.isArray(sbDocs)) {
+        for (const d of sbDocs) {
+          if (
+            d &&
+            d.id &&
+            !String(d.id).startsWith('test-int-') &&
+            String(d.status || '').toUpperCase() === 'ENVIADO' &&
+            (force || !deletedAlkostoIdsMemory.has(d.id))
+          ) {
+            if (!candidateMap.has(d.id)) {
+              candidateMap.set(d.id, d);
+            }
+          }
+        }
+      }
+    }
+
+    const enviados = Array.from(candidateMap.values());
     if (enviados.length === 0) return 0;
 
     const enviadoIds = enviados.map((d: any) => d.id);
@@ -161,6 +204,7 @@ async function syncSairuFirestoreToSupabase(): Promise<number> {
 
     const existingMap = new Map<string, any>((existingInSup || []).map((r: any) => [r.id, r]));
     const rowsToUpsert: any[] = [];
+    const nowIso = new Date().toISOString();
 
     for (const d of enviados) {
       const parsed = parseAndValidateChainOrders(d);
@@ -169,8 +213,6 @@ async function syncSairuFirestoreToSupabase(): Promise<number> {
 
       const existing = existingMap.get(d.id);
       if (existing) {
-        // Si ya está en Sala de Espera (POR_VALIDAR / ERROR_FORMATO) o entró sin validar (PENDIENTE_CXC corto),
-        // reconciliamos si aún no tenía la auditoría de parsing aplicada o si estaba en PENDIENTE_CXC sin validar
         const needsNormalization =
           isUnvalidatedExternalChainOrder(existing) ||
           ((existing.status === 'POR_VALIDAR' || existing.status === 'ERROR_FORMATO') &&
@@ -178,11 +220,17 @@ async function syncSairuFirestoreToSupabase(): Promise<number> {
             !String(existing.cxc_note || '').includes('AVISO_PARSING'));
 
         if (needsNormalization) {
+          normOrder.dbRow.created_at = nowIso;
+          normOrder.dbRow.updated_at = nowIso;
+          normOrder.dbRow.is_archived = false;
           rowsToUpsert.push(normOrder.dbRow);
         }
         continue;
       }
 
+      normOrder.dbRow.created_at = nowIso;
+      normOrder.dbRow.updated_at = nowIso;
+      normOrder.dbRow.is_archived = false;
       rowsToUpsert.push(normOrder.dbRow);
     }
 
@@ -192,16 +240,19 @@ async function syncSairuFirestoreToSupabase(): Promise<number> {
 
     return rowsToUpsert.length;
   } catch (err) {
-    console.warn('Background Sairú Firestore sync warning:', err);
+    console.warn('Background Sairú Firestore/Supabase sync warning:', err);
     return 0;
   }
 }
 
-function triggerSairuSyncIfDue() {
+async function ensureSairuSyncIfDue(): Promise<void> {
   const now = Date.now();
   if (now - lastSairuSyncRun >= SAIRU_SYNC_INTERVAL_MS) {
     lastSairuSyncRun = now;
-    syncSairuFirestoreToSupabase().catch(() => {});
+    await Promise.race([
+      syncSairuFirestoreToSupabase(false),
+      new Promise(resolve => setTimeout(resolve, 3500))
+    ]).catch(() => {});
   }
 }
 
@@ -326,24 +377,39 @@ function triggerCutoffIfDue() {
 // Columnas requeridas para los pedidos activos (se omite raw_order para reducir payload >60%)
 const ACTIVE_ORDERS_COLUMNS = 'id, status, created_at, updated_at, status_history, reject_reason, cxc_note, fact_note, is_archived, cliente, id_cliente, ruta, supervisor, chofer, observaciones, fecha, articulos, numero_pedido, total_pedido, monto_pedido';
 
-// GET todos los pedidos activos (optimizado para respuesta instantánea)
+// GET todos los pedidos activos (optimizado para respuesta instantánea y sincronización garantizada de Sala de Espera)
 router.get('/', async (req, res) => {
   try {
     // Se dispara en segundo plano si ya pasaron 6 horas (no bloquea la respuesta HTTP)
     triggerCutoffIfDue();
-    // Sincronización automática en segundo plano con la app de Alkosto de Sairú
-    triggerSairuSyncIfDue();
+    // Asegura que las órdenes de compra cargadas hoy en la app de Sairú estén sincronizadas antes de responder
+    await ensureSairuSyncIfDue();
     
-    const { data, error } = await supabase
-      .from('orders')
-      .select(ACTIVE_ORDERS_COLUMNS)
-      .is('is_archived', false)
-      .order('created_at', { ascending: false })
-      .range(0, 999);
+    const [activeQuery, waitingQuery] = await Promise.all([
+      supabase
+        .from('orders')
+        .select(ACTIVE_ORDERS_COLUMNS)
+        .is('is_archived', false)
+        .order('created_at', { ascending: false })
+        .range(0, 999),
+      supabase
+        .from('orders')
+        .select(ACTIVE_ORDERS_COLUMNS)
+        .in('status', ['POR_VALIDAR', 'ERROR_FORMATO'])
+        .order('created_at', { ascending: false })
+    ]);
       
-    if (error) throw error;
+    if (activeQuery.error) throw activeQuery.error;
     
-    const allRows = data || [];
+    const mergedMap = new Map<string, any>();
+    for (const r of waitingQuery.data || []) {
+      if (r && r.id) mergedMap.set(r.id, r);
+    }
+    for (const r of activeQuery.data || []) {
+      if (r && r.id && !mergedMap.has(r.id)) mergedMap.set(r.id, r);
+    }
+    const allRows = Array.from(mergedMap.values());
+
     const ghostIds = allRows.filter(isTestOrGhostOrder).map(r => r.id).filter(Boolean);
     if (ghostIds.length > 0) {
       // Auto-purgar pedidos fantasma de pruebas QA externas en segundo plano
@@ -389,8 +455,24 @@ router.get('/', async (req, res) => {
 router.post('/sync-alkosto', async (req, res) => {
   try {
     lastSairuSyncRun = Date.now();
-    const syncedCount = await syncSairuFirestoreToSupabase();
-    res.json({ success: true, syncedCount });
+    const force = req.body?.force !== false;
+    const syncedCount = await syncSairuFirestoreToSupabase(force);
+
+    const { data: waitingRows } = await supabase
+      .from('orders')
+      .select(ACTIVE_ORDERS_COLUMNS)
+      .in('status', ['POR_VALIDAR', 'ERROR_FORMATO'])
+      .order('created_at', { ascending: false });
+
+    const waitingOrders = (waitingRows || [])
+      .filter(row => !isTestOrGhostOrder(row))
+      .map(row => {
+        const o = mapSupabaseToDbOrder(row);
+        o.isArchived = false;
+        return o;
+      });
+
+    res.json({ success: true, syncedCount, waitingOrders });
   } catch (err: any) {
     console.error('Error syncing Alkosto orders:', err);
     res.status(500).json({ error: err.message });

@@ -38,11 +38,16 @@ const refreshAccessToken = async (): Promise<string | null> => {
 };
 
 export const apiFetch = async (endpoint: string, options: RequestInit = {}): Promise<Response> => {
-  const token = useAuthStore.getState().user?.token;
+  const user = useAuthStore.getState().user;
+  const token = user?.token;
+  const userHeader = user?.username
+    ? JSON.stringify({ username: user.username, role: user.role })
+    : undefined;
 
   const buildHeaders = (authToken?: string) => ({
     ...options.headers,
-    ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {})
+    ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
+    ...(userHeader ? { 'x-codizulca-user': userHeader } : {})
   });
 
   const url = API_BASE_URL ? `${API_BASE_URL}${endpoint}` : endpoint;
