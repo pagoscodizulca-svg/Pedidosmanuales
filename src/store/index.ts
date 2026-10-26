@@ -51,6 +51,7 @@ interface AppState {
   deleteBatchOrders: (ids: string[]) => Promise<void>;
   updateSupervisor: (id: string, supervisor: string) => Promise<void>;
   parseOrderWithAI: (text: string) => Promise<Partial<OrderData>>;
+  syncAlkostoOrders: () => Promise<number>;
 }
 
 function isGhostTestOrder(o: DbOrder): boolean {
@@ -70,6 +71,22 @@ function isGhostTestOrder(o: DbOrder): boolean {
   return false;
 }
 
+function normalizeExternalChainOrder(item: DbOrder): DbOrder {
+  const id = String(item.id || '').trim().toLowerCase();
+  const num = String(item.order?.numero_pedido || '').trim();
+  const history = Array.isArray(item.statusHistory) ? item.statusHistory : [];
+  if (id.startsWith('alk-') && item.status === 'PENDIENTE_CXC') {
+    const hasShortCorrelativo = num.length <= 4 || num === 'APP-FDV' || num === 'PENDIENTE';
+    const wasValidatedInManuales = history.some(
+      (h: any) => h && h.status === 'PENDIENTE_CXC' && h.reason === 'Validado y actualizado'
+    );
+    if (hasShortCorrelativo && !wasValidatedInManuales) {
+      return { ...item, status: 'POR_VALIDAR', rejectReason: undefined };
+    }
+  }
+  return item;
+}
+
 function dedupeAndFilterOrders(list: DbOrder[]): DbOrder[] {
   const seen = new Set<string>();
   const result: DbOrder[] = [];
@@ -77,7 +94,7 @@ function dedupeAndFilterOrders(list: DbOrder[]): DbOrder[] {
     if (!item || !item.id || isGhostTestOrder(item)) continue;
     if (seen.has(item.id)) continue;
     seen.add(item.id);
-    result.push(item);
+    result.push(normalizeExternalChainOrder(item));
   }
   return result;
 }
@@ -111,6 +128,22 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ orders: dedupeAndFilterOrders(data), loading: false });
     } catch (err: any) {
       set({ error: err.message, loading: false });
+    }
+  },
+
+  syncAlkostoOrders: async () => {
+    try {
+      const response = await apiFetch('/api/orders/sync-alkosto', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await response.json().catch(() => ({ syncedCount: 0 }));
+      await get().fetchOrders();
+      return Number(data.syncedCount || 0);
+    } catch (err: any) {
+      console.warn('Error syncing Alkosto orders:', err);
+      await get().fetchOrders();
+      return 0;
     }
   },
   

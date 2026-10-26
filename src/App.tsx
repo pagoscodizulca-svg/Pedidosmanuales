@@ -70,7 +70,7 @@ function App() {
            const cliente = payload.new?.cliente || payload.new?.order_data?.cliente || 'Nuevo Pedido';
            const newStatus = payload.new?.status;
            const orderNum = payload.new?.numero_pedido || payload.new?.order_data?.numero_pedido;
-           if (newStatus === 'PENDIENTE_CXC') {
+           if (newStatus === 'PENDIENTE_CXC' && !rowId.startsWith('alk-')) {
              showToast(`Nuevo pedido recibido en Cuentas por Cobrar${orderNum ? ` (#${orderNum})` : ''}: ${cliente}`);
            } else {
              showToast(`Nuevo pedido recibido en Sala de Espera: ${cliente}`);

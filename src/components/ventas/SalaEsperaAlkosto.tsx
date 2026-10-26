@@ -1,17 +1,32 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useAppStore } from '../../store/index';
-import { Clock, Eye, Smartphone, Search, CheckCircle2, Building2, Store, ShoppingBag, Trash2, Loader2 } from 'lucide-react';
+import { Clock, Eye, Smartphone, Search, CheckCircle2, Building2, Store, ShoppingBag, Trash2, Loader2, RefreshCw } from 'lucide-react';
 import { OrderModal } from '../shared/OrderModal';
 import { DbOrder } from '../../types';
 
 export const SalaEsperaAlkosto: React.FC = () => {
-  const { orders, updateFullOrder, deleteOrder, deleteBatchOrders } = useAppStore();
+  const { orders, updateFullOrder, deleteOrder, deleteBatchOrders, syncAlkostoOrders } = useAppStore();
   const [selectedOrder, setSelectedOrder] = useState<DbOrder | null>(null);
   const [selectedChain, setSelectedChain] = useState<'TODAS' | 'ALKOSTO' | 'FAMILIA'>('TODAS');
   const [search, setSearch] = useState('');
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isClearingAll, setIsClearingAll] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  // Sincronizar automáticamente con la App de Alkosto de Sairú al cargar el módulo
+  useEffect(() => {
+    syncAlkostoOrders().catch(() => {});
+  }, [syncAlkostoOrders]);
+
+  const handleManualSync = async () => {
+    setIsSyncing(true);
+    try {
+      await syncAlkostoOrders();
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   // Filtramos todos los pedidos pendientes de la sala de espera
   const pendingOrders = useMemo(() => {
@@ -153,6 +168,15 @@ export const SalaEsperaAlkosto: React.FC = () => {
           <div className="flex items-center justify-center bg-amber-100 border border-amber-300 text-amber-900 font-extrabold text-xs h-10 px-4 rounded-xl shadow-sm">
             {pendingOrders.length} {pendingOrders.length === 1 ? 'PEDIDO' : 'PEDIDOS'}
           </div>
+          <button
+            onClick={handleManualSync}
+            disabled={isSyncing}
+            className="flex items-center gap-1.5 bg-cyan-50 hover:bg-cyan-100 text-cyan-800 border border-cyan-200 text-xs font-black h-10 px-3.5 rounded-xl transition-all shadow-sm disabled:opacity-50"
+            title="Sincronizar con App de Alkosto de Sairú"
+          >
+            <RefreshCw size={14} className={isSyncing ? 'animate-spin' : ''} />
+            <span>Sincronizar</span>
+          </button>
           {pendingOrders.length > 0 && (
             <button
               onClick={handleClearWaitingRoom}

@@ -24,6 +24,247 @@ function isTestOrGhostOrder(row: any): boolean {
   return false;
 }
 
+// Detecta pedidos enviados desde la app externa de cadenas (Sairú / Alkosto / Familia Center)
+// que entraron con status 'PENDIENTE_CXC' y correlativo corto de 4 dígitos sin pasar por Sala de Espera
+function isUnvalidatedExternalChainOrder(row: any): boolean {
+  if (!row) return false;
+  const id = String(row.id || '').trim().toLowerCase();
+  const num = String(row.numero_pedido ?? row.order?.numero_pedido ?? '').trim();
+  const history = Array.isArray(row.status_history)
+    ? row.status_history
+    : Array.isArray(row.statusHistory)
+      ? row.statusHistory
+      : [];
+
+  if (id.startsWith('alk-') && row.status === 'PENDIENTE_CXC') {
+    const hasShortCorrelativo = num.length <= 4 || num === 'APP-FDV' || num === 'PENDIENTE';
+    const wasValidatedInManuales = history.some(
+      (h: any) => h && h.status === 'PENDIENTE_CXC' && h.reason === 'Validado y actualizado'
+    );
+    if (hasShortCorrelativo && !wasValidatedInManuales) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Conexión directa vía REST API con Firestore de la App de Alkosto de Sairú (https://dashboard-fdv-planificador.onrender.com)
+const SAIRU_FIRESTORE_BASE =
+  'https://firestore.googleapis.com/v1/projects/gen-lang-client-0359272213/databases/ai-studio-dashboardfdvplan-b71166f0-11d2-4bf0-8a16-d3a8accb0022/documents';
+const deletedAlkostoIdsMemory = new Set<string>();
+let lastSairuSyncRun = 0;
+const SAIRU_SYNC_INTERVAL_MS = 20 * 1000;
+
+function parseFirestoreVal(v: any): any {
+  if (!v || typeof v !== 'object') return v;
+  if ('stringValue' in v) return v.stringValue;
+  if ('integerValue' in v) return Number(v.integerValue);
+  if ('doubleValue' in v) return Number(v.doubleValue);
+  if ('booleanValue' in v) return Boolean(v.booleanValue);
+  if ('nullValue' in v) return null;
+  if ('timestampValue' in v) return v.timestampValue;
+  if ('arrayValue' in v) return (v.arrayValue.values || []).map(parseFirestoreVal);
+  if ('mapValue' in v) {
+    const out: Record<string, any> = {};
+    for (const [k, val] of Object.entries(v.mapValue.fields || {})) {
+      out[k] = parseFirestoreVal(val);
+    }
+    return out;
+  }
+  return v;
+}
+
+function parseFirestoreDoc(doc: any): any {
+  const id = String(doc.name || '').split('/').pop() || '';
+  const out: Record<string, any> = { id };
+  for (const [k, val] of Object.entries(doc.fields || {})) {
+    out[k] = parseFirestoreVal(val);
+  }
+  return out;
+}
+
+async function markSairuFirestoreProcessed(id: string): Promise<void> {
+  if (!String(id || '').startsWith('alk-')) return;
+  try {
+    await fetch(`${SAIRU_FIRESTORE_BASE}/alkosto_orders/${encodeURIComponent(id)}?updateMask.fieldPaths=estado`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields: { estado: { stringValue: 'PROCESADO' } } })
+    });
+  } catch (e) {
+    console.warn('Note: could not mark Alkosto order PROCESADO in Firestore:', e);
+  }
+}
+
+async function deleteFromSairuFirestore(ids: string[]): Promise<void> {
+  for (const id of ids) {
+    if (!String(id || '').startsWith('alk-')) continue;
+    deletedAlkostoIdsMemory.add(id);
+    try {
+      await fetch(`${SAIRU_FIRESTORE_BASE}/alkosto_orders/${encodeURIComponent(id)}`, {
+        method: 'DELETE'
+      });
+    } catch (e) {
+      console.warn('Note: could not delete Alkosto order from Firestore:', e);
+    }
+  }
+}
+
+async function syncSairuFirestoreToSupabase(): Promise<number> {
+  try {
+    const fsRes = await fetch(`${SAIRU_FIRESTORE_BASE}:runQuery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        structuredQuery: {
+          from: [{ collectionId: 'alkosto_orders' }]
+        }
+      })
+    });
+    if (!fsRes.ok) return 0;
+
+    const rawItems = await fsRes.json();
+    if (!Array.isArray(rawItems)) return 0;
+
+    const fsDocs = rawItems
+      .filter((x: any) => x && x.document)
+      .map((x: any) => parseFirestoreDoc(x.document));
+
+    // Auto-purgar cualquier documento de prueba test-int-* en Firestore
+    const testFsDocs = fsDocs.filter(
+      (d: any) =>
+        String(d.id || '').startsWith('test-int-') ||
+        String(d.numeroPedido || '') === '9999' ||
+        String(d.ordenCompraAlkosto || '').toUpperCase().includes('OC-TEST-INT')
+    );
+    for (const td of testFsDocs) {
+      fetch(`${SAIRU_FIRESTORE_BASE}/alkosto_orders/${encodeURIComponent(td.id)}`, { method: 'DELETE' }).catch(() => {});
+    }
+
+    // Filtrar pedidos con estado ENVIADO
+    const enviados = fsDocs.filter(
+      (d: any) =>
+        !testFsDocs.includes(d) &&
+        !deletedAlkostoIdsMemory.has(d.id) &&
+        String(d.estado || '').toUpperCase() === 'ENVIADO' &&
+        d.id
+    );
+
+    if (enviados.length === 0) return 0;
+
+    const enviadoIds = enviados.map((d: any) => d.id);
+    const { data: existingInSup } = await supabase
+      .from('orders')
+      .select('id, status, numero_pedido, status_history')
+      .in('id', enviadoIds);
+
+    const existingMap = new Map<string, any>((existingInSup || []).map((r: any) => [r.id, r]));
+    const rowsToInsert: any[] = [];
+    const idsToNormalize: string[] = [];
+
+    for (const d of enviados) {
+      const existing = existingMap.get(d.id);
+      if (existing) {
+        if (isUnvalidatedExternalChainOrder(existing)) {
+          idsToNormalize.push(d.id);
+        }
+        continue;
+      }
+
+      const items = Array.isArray(d.items) ? d.items : [];
+      const articulos = items.map((it: any) => ({
+        codigo: String(it.sku || it.codigo || '').trim(),
+        descripcion: String(it.producto || it.descripcion || '').trim(),
+        unidad_medida: String(it.presentacion || it.unid || 'CJ').trim().toUpperCase(),
+        cantidad_solicitada: Number(it.cantidadCajas ?? it.cantSolicitada ?? 0),
+        cantidad_despachada: 0,
+        precio_unitario: Number(it.precioUnitarioUSD ?? it.precio ?? 0),
+        sub_total: Number(it.subtotalUSD ?? it.subtotal ?? 0)
+      }));
+
+      let obs = String(d.observaciones || '').trim();
+      if (d.ordenCompraAlkosto && !obs.includes(String(d.ordenCompraAlkosto))) {
+        obs = obs ? `${obs} | OC Alkosto: ${d.ordenCompraAlkosto}` : `OC Alkosto: ${d.ordenCompraAlkosto}`;
+      }
+
+      const correlativo = String(d.correlativo || d.numeroPedido || 'APP-FDV').trim();
+      const totalUSD = Number(d.totalUSD || 0);
+      const fecha = String(d.fechaPedido || new Date().toISOString().split('T')[0]).trim();
+      const ruta = String(d.ruta || d.vendedora || 'SAIRU VALLES / CUENTAS CLAVE 2').trim();
+      const cliente = String(d.sucursalNombre || 'ALKOSTO').trim();
+      const idCliente = String(d.sucursalCodigo || '').trim();
+      const createdAt = d.createdAt || new Date().toISOString();
+
+      const orderPayload = {
+        cliente,
+        id_cliente: idCliente,
+        ruta,
+        supervisor: '',
+        chofer: '',
+        observaciones: obs,
+        fecha,
+        total_pedido: totalUSD,
+        monto_pedido: totalUSD,
+        numero_pedido: correlativo,
+        articulos
+      };
+
+      rowsToInsert.push({
+        id: d.id,
+        numero_pedido: correlativo,
+        cliente,
+        id_cliente: idCliente,
+        ruta,
+        supervisor: '',
+        chofer: '',
+        observaciones: obs,
+        fecha,
+        total_pedido: totalUSD,
+        monto_pedido: totalUSD,
+        status: 'POR_VALIDAR',
+        articulos,
+        raw_order: orderPayload,
+        is_archived: false,
+        created_at: createdAt,
+        updated_at: new Date().toISOString(),
+        status_history: [
+          {
+            status: 'POR_VALIDAR',
+            department: 'Ventas',
+            changedBy: 'SAIRÚ VALLES',
+            timestamp: createdAt,
+            reason: 'Recibido en Sala de Espera desde App Alkosto (Sairú Valles)'
+          }
+        ]
+      });
+    }
+
+    if (idsToNormalize.length > 0) {
+      await supabase
+        .from('orders')
+        .update({ status: 'POR_VALIDAR', reject_reason: null, updated_at: new Date().toISOString() })
+        .in('id', idsToNormalize);
+    }
+
+    if (rowsToInsert.length > 0) {
+      await supabase.from('orders').insert(rowsToInsert);
+    }
+
+    return rowsToInsert.length + idsToNormalize.length;
+  } catch (err) {
+    console.warn('Background Sairú Firestore sync warning:', err);
+    return 0;
+  }
+}
+
+function triggerSairuSyncIfDue() {
+  const now = Date.now();
+  if (now - lastSairuSyncRun >= SAIRU_SYNC_INTERVAL_MS) {
+    lastSairuSyncRun = now;
+    syncSairuFirestoreToSupabase().catch(() => {});
+  }
+}
+
 function mapSupabaseToDbOrder(row: any): DbOrder {
   return {
     id: row.id,
@@ -150,6 +391,8 @@ router.get('/', async (req, res) => {
   try {
     // Se dispara en segundo plano si ya pasaron 6 horas (no bloquea la respuesta HTTP)
     triggerCutoffIfDue();
+    // Sincronización automática en segundo plano con la app de Alkosto de Sairú
+    triggerSairuSyncIfDue();
     
     const { data, error } = await supabase
       .from('orders')
@@ -169,6 +412,25 @@ router.get('/', async (req, res) => {
       });
     }
 
+    // Normalizar automáticamente pedidos recién llegados de la App de Sairú a Sala de Espera ('POR_VALIDAR')
+    const unvalidatedChainIds: string[] = [];
+    for (const row of allRows) {
+      if (isUnvalidatedExternalChainOrder(row)) {
+        row.status = 'POR_VALIDAR';
+        row.reject_reason = null;
+        if (row.id) unvalidatedChainIds.push(row.id);
+      }
+    }
+    if (unvalidatedChainIds.length > 0) {
+      supabase
+        .from('orders')
+        .update({ status: 'POR_VALIDAR', reject_reason: null, updated_at: new Date().toISOString() })
+        .in('id', unvalidatedChainIds)
+        .then(({ error: normErr }) => {
+          if (normErr) console.error('Error auto-normalizing external chain orders to POR_VALIDAR:', normErr);
+        });
+    }
+
     const orders = allRows
       .filter(row => !isTestOrGhostOrder(row))
       .map(row => {
@@ -179,6 +441,18 @@ router.get('/', async (req, res) => {
     res.json(orders);
   } catch (err: any) {
     console.error('Error fetching from Supabase:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST sincronizar bajo demanda desde la App de Alkosto de Sairú (https://dashboard-fdv-planificador.onrender.com)
+router.post('/sync-alkosto', async (req, res) => {
+  try {
+    lastSairuSyncRun = Date.now();
+    const syncedCount = await syncSairuFirestoreToSupabase();
+    res.json({ success: true, syncedCount });
+  } catch (err: any) {
+    console.error('Error syncing Alkosto orders:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -528,6 +802,10 @@ router.put('/:id', async (req, res) => {
 
     if (updateErr) throw updateErr;
 
+    if (existingData.status === 'POR_VALIDAR' && status === 'PENDIENTE_CXC') {
+      markSairuFirestoreProcessed(id).catch(() => {});
+    }
+
     res.json({ success: true, numero_pedido: finalCorrelativo });
   } catch (err: any) {
     console.error('Update full order error:', err);
@@ -572,6 +850,7 @@ router.delete('/:id', async (req, res) => {
       .eq('id', id);
 
     if (error) throw error;
+    deleteFromSairuFirestore([id]).catch(() => {});
     res.json({ success: true, id });
   } catch (err: any) {
     console.error('Error deleting order:', err);
@@ -599,6 +878,7 @@ router.post('/batch-delete', async (req, res) => {
       .in('id', ids);
 
     if (error) throw error;
+    deleteFromSairuFirestore(ids).catch(() => {});
     res.json({ success: true, count: ids.length, deletedIds: ids });
   } catch (err: any) {
     console.error('Error in batch delete orders:', err);
