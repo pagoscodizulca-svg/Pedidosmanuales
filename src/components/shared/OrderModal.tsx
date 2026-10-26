@@ -104,7 +104,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({ order, onClose }) => {
             <h2 className="text-lg font-extrabold text-slate-800">Detalles del Pedido</h2>
             <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider ${
               order.status === 'COMPLETADO' ? 'bg-cyan-100 text-cyan-800' :
-              order.status === 'RECHAZADO' ? 'bg-red-100 text-red-800' :
+              order.status === 'RECHAZADO' || order.status === 'ERROR_FORMATO' ? 'bg-red-100 text-red-800' :
               'bg-amber-100 text-amber-800'
             }`}>
               {(order.status || '').replace('_', ' ')}
@@ -117,6 +117,20 @@ export const OrderModal: React.FC<OrderModalProps> = ({ order, onClose }) => {
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6 bg-slate-100 space-y-6">
+          {(order.status === 'ERROR_FORMATO' || String(order.cxcNote || '').startsWith('ERROR_FORMATO:') || String(order.cxcNote || '').startsWith('AVISO_PARSING:')) && (
+            <div className={`rounded-xl border p-4 text-xs ${
+              order.status === 'ERROR_FORMATO' || String(order.cxcNote || '').startsWith('ERROR_FORMATO:')
+                ? 'bg-red-50 border-red-200 text-red-900'
+                : 'bg-amber-50 border-amber-200 text-amber-900'
+            }`}>
+              <p className="font-extrabold uppercase tracking-wide mb-1">
+                {order.status === 'ERROR_FORMATO' ? '⚠️ Orden con Error de Formato (Fallback Activo)' : 'ℹ️ Aviso de Auditoría / Normalización Automática'}
+              </p>
+              <p className="font-medium leading-relaxed">
+                {String(order.cxcNote || 'Verifica los campos del pedido antes de enviarlo a Cuentas por Cobrar.').replace(/^(ERROR_FORMATO|AVISO_PARSING):\s*/i, '')}
+              </p>
+            </div>
+          )}
           
           {/* Resumen Superior */}
           <div className="bg-white rounded-xl border border-slate-200 p-4 flex justify-between items-center shadow-sm">
@@ -222,7 +236,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({ order, onClose }) => {
             >
               Cerrar
             </button>
-            {order.status === 'POR_VALIDAR' ? (
+            {order.status === 'POR_VALIDAR' || order.status === 'ERROR_FORMATO' ? (
               <button 
                 onClick={handleSaveAndSend}
                 disabled={saving}

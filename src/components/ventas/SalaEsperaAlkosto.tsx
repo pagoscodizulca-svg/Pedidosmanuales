@@ -1,8 +1,43 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useAppStore } from '../../store/index';
-import { Clock, Eye, Smartphone, Search, CheckCircle2, Building2, Store, ShoppingBag, Trash2, Loader2, RefreshCw } from 'lucide-react';
+import { Clock, Eye, Smartphone, Search, CheckCircle2, Building2, Store, ShoppingBag, Trash2, Loader2, RefreshCw, AlertTriangle } from 'lucide-react';
 import { OrderModal } from '../shared/OrderModal';
 import { DbOrder } from '../../types';
+
+const ALKOSTO_CODES = new Set(['7497', '7498', '7499', '7500', '7501', '7502', '7503', '7680', '7905', '8160', '8306', '1560', '007497', '007498', '007499', '007500', '007501', '007502', '007503', '007680', '007905', '008160', '008306', '001560']);
+const FAMILIA_CODES = new Set(['7489', '7490', '7491', '7492', '7493', '7494', '8229', '5373', '007489', '007490', '007491', '007492', '007493', '007494', '008229', '005373']);
+
+function detectOrderChain(o: DbOrder): 'ALKOSTO' | 'FAMILIA' | 'OTRA' {
+  const cli = String(o.order?.cliente || '').toUpperCase();
+  const idCli = String(o.order?.id_cliente || '').trim().toUpperCase();
+  const orig = String(o.order?.origen || '').toUpperCase();
+  const obs = String(o.order?.observaciones || '').toUpperCase();
+  const id = String(o.id || '').toUpperCase();
+
+  if (
+    cli.includes('FAMILIA') ||
+    orig.includes('FAMILIA') ||
+    obs.includes('OC FAMILIA') ||
+    id.startsWith('ALK-FC') ||
+    FAMILIA_CODES.has(idCli) ||
+    /\bFC0?[1-7]\b|\bFCOP\b/.test(`${cli} ${idCli} ${obs}`)
+  ) {
+    return 'FAMILIA';
+  }
+
+  if (
+    cli.includes('ALKOSTO') ||
+    orig.includes('ALKOSTO') ||
+    obs.includes('OC ALKOSTO') ||
+    id.startsWith('ALK-AK') ||
+    ALKOSTO_CODES.has(idCli) ||
+    /\bAK0?[1-9]\b|\bAK10\b|\bAKOP\b/.test(`${cli} ${idCli} ${obs}`)
+  ) {
+    return 'ALKOSTO';
+  }
+
+  return 'OTRA';
+}
 
 export const SalaEsperaAlkosto: React.FC = () => {
   const { orders, updateFullOrder, deleteOrder, deleteBatchOrders, syncAlkostoOrders } = useAppStore();
@@ -28,18 +63,18 @@ export const SalaEsperaAlkosto: React.FC = () => {
     }
   };
 
-  // Filtramos todos los pedidos pendientes de la sala de espera
+  // Filtramos todos los pedidos pendientes de la sala de espera (incluyendo aquellos con Error de Formato)
   const pendingOrders = useMemo(() => {
-    return orders.filter(o => o.status === 'POR_VALIDAR');
+    return orders.filter(o => o.status === 'POR_VALIDAR' || o.status === 'ERROR_FORMATO');
   }, [orders]);
 
   // Clasificación por cadenas
   const alkostoOrders = useMemo(() => {
-    return pendingOrders.filter(o => (o.order?.cliente || '').toUpperCase().includes('ALKOSTO'));
+    return pendingOrders.filter(o => detectOrderChain(o) === 'ALKOSTO');
   }, [pendingOrders]);
 
   const familiaOrders = useMemo(() => {
-    return pendingOrders.filter(o => (o.order?.cliente || '').toUpperCase().includes('FAMILIA'));
+    return pendingOrders.filter(o => detectOrderChain(o) === 'FAMILIA');
   }, [pendingOrders]);
 
   // Totales acumulados
@@ -69,16 +104,16 @@ export const SalaEsperaAlkosto: React.FC = () => {
     return list;
   }, [pendingOrders, selectedChain, alkostoOrders, familiaOrders, search]);
 
-  const getChainBadge = (clienteName: string) => {
-    const norm = (clienteName || '').toUpperCase();
-    if (norm.includes('ALKOSTO')) {
+  const getChainBadge = (o: DbOrder) => {
+    const chain = detectOrderChain(o);
+    if (chain === 'ALKOSTO') {
       return (
         <span className="inline-flex items-center gap-1 bg-red-100 text-red-800 border border-red-200 text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">
           <Store size={11} className="text-red-600" /> ALKOSTO
         </span>
       );
     }
-    if (norm.includes('FAMILIA')) {
+    if (chain === 'FAMILIA') {
       return (
         <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-800 border border-emerald-200 text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">
           <Building2 size={11} className="text-emerald-600" /> FAMILIA CENTER
@@ -264,18 +299,22 @@ export const SalaEsperaAlkosto: React.FC = () => {
           {filteredOrders.map(o => {
             const itemCount = Array.isArray(o.order.articulos) ? o.order.articulos.filter(a => a.descripcion).length : 0;
             const isApproving = approvingId === o.id;
+            const isFormatError = o.status === 'ERROR_FORMATO' || String(o.cxcNote || '').startsWith('ERROR_FORMATO:');
+            const parsingNotice = String(o.cxcNote || '').replace(/^(ERROR_FORMATO|AVISO_PARSING):\s*/i, '').trim();
 
             return (
               <div 
                 key={o.id} 
-                className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm hover:shadow-md hover:border-slate-300 transition-all flex flex-col justify-between"
+                className={`bg-white rounded-2xl p-5 border shadow-sm hover:shadow-md transition-all flex flex-col justify-between ${
+                  isFormatError ? 'border-red-300 ring-1 ring-red-100' : 'border-slate-200 hover:border-slate-300'
+                }`}
               >
                 <div>
                   {/* Encabezado Tarjeta */}
                   <div className="flex justify-between items-start gap-2 mb-3">
                     <div className="flex-1 overflow-hidden">
                       <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                        {getChainBadge(o.order.cliente)}
+                        {getChainBadge(o)}
                         {o.order.id_cliente && (
                           <span className="bg-slate-100 text-slate-600 font-mono text-[10px] font-bold px-1.5 py-0.5 rounded">
                             ID: {o.order.id_cliente}
@@ -287,9 +326,15 @@ export const SalaEsperaAlkosto: React.FC = () => {
                       </h3>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
-                      <span className="bg-amber-50 border border-amber-200 text-amber-700 text-[10px] px-2 py-0.5 rounded font-black uppercase tracking-wider">
-                        POR VALIDAR
-                      </span>
+                      {isFormatError ? (
+                        <span className="inline-flex items-center gap-1 bg-red-100 border border-red-300 text-red-800 text-[10px] px-2 py-0.5 rounded font-black uppercase tracking-wider">
+                          <AlertTriangle size={11} /> ERROR DE FORMATO
+                        </span>
+                      ) : (
+                        <span className="bg-amber-50 border border-amber-200 text-amber-700 text-[10px] px-2 py-0.5 rounded font-black uppercase tracking-wider">
+                          POR VALIDAR
+                        </span>
+                      )}
                       <button
                         onClick={() => handleDeleteOrder(o)}
                         disabled={deletingId === o.id}
@@ -300,6 +345,21 @@ export const SalaEsperaAlkosto: React.FC = () => {
                       </button>
                     </div>
                   </div>
+
+                  {/* Alerta de Error de Formato o Aviso de Auditoría OCR */}
+                  {parsingNotice && (
+                    <div className={`mb-3 p-2.5 rounded-xl border text-[11px] leading-snug ${
+                      isFormatError
+                        ? 'bg-red-50 border-red-200 text-red-800'
+                        : 'bg-amber-50/80 border-amber-200 text-amber-900'
+                    }`}>
+                      <p className="font-extrabold uppercase text-[10px] mb-0.5 flex items-center gap-1">
+                        <AlertTriangle size={11} />
+                        {isFormatError ? 'Requiere Corrección Manual:' : 'Ajuste Automático de Auditoría OCR:'}
+                      </p>
+                      <p className="line-clamp-3" title={parsingNotice}>{parsingNotice}</p>
+                    </div>
+                  )}
 
                   {/* Datos Operativos */}
                   <div className="space-y-1 text-xs text-slate-500 mb-4 bg-slate-50/70 p-2.5 rounded-xl border border-slate-100">

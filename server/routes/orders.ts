@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { DbOrder, OrderStatus } from '../../src/types.js';
+import { parseAndValidateChainOrders } from '../services/chainOrderParser.js';
 
 const router = Router();
 const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
@@ -155,102 +156,41 @@ async function syncSairuFirestoreToSupabase(): Promise<number> {
     const enviadoIds = enviados.map((d: any) => d.id);
     const { data: existingInSup } = await supabase
       .from('orders')
-      .select('id, status, numero_pedido, status_history')
+      .select('id, status, numero_pedido, status_history, total_pedido, cxc_note')
       .in('id', enviadoIds);
 
     const existingMap = new Map<string, any>((existingInSup || []).map((r: any) => [r.id, r]));
-    const rowsToInsert: any[] = [];
-    const idsToNormalize: string[] = [];
+    const rowsToUpsert: any[] = [];
 
     for (const d of enviados) {
+      const parsed = parseAndValidateChainOrders(d);
+      if (parsed.orders.length === 0) continue;
+      const normOrder = parsed.orders[0];
+
       const existing = existingMap.get(d.id);
       if (existing) {
-        if (isUnvalidatedExternalChainOrder(existing)) {
-          idsToNormalize.push(d.id);
+        // Si ya está en Sala de Espera (POR_VALIDAR / ERROR_FORMATO) o entró sin validar (PENDIENTE_CXC corto),
+        // reconciliamos si aún no tenía la auditoría de parsing aplicada o si estaba en PENDIENTE_CXC sin validar
+        const needsNormalization =
+          isUnvalidatedExternalChainOrder(existing) ||
+          ((existing.status === 'POR_VALIDAR' || existing.status === 'ERROR_FORMATO') &&
+            Number(existing.total_pedido) !== Number(normOrder.orderData.total_pedido) &&
+            !String(existing.cxc_note || '').includes('AVISO_PARSING'));
+
+        if (needsNormalization) {
+          rowsToUpsert.push(normOrder.dbRow);
         }
         continue;
       }
 
-      const items = Array.isArray(d.items) ? d.items : [];
-      const articulos = items.map((it: any) => ({
-        codigo: String(it.sku || it.codigo || '').trim(),
-        descripcion: String(it.producto || it.descripcion || '').trim(),
-        unidad_medida: String(it.presentacion || it.unid || 'CJ').trim().toUpperCase(),
-        cantidad_solicitada: Number(it.cantidadCajas ?? it.cantSolicitada ?? 0),
-        cantidad_despachada: 0,
-        precio_unitario: Number(it.precioUnitarioUSD ?? it.precio ?? 0),
-        sub_total: Number(it.subtotalUSD ?? it.subtotal ?? 0)
-      }));
-
-      let obs = String(d.observaciones || '').trim();
-      if (d.ordenCompraAlkosto && !obs.includes(String(d.ordenCompraAlkosto))) {
-        obs = obs ? `${obs} | OC Alkosto: ${d.ordenCompraAlkosto}` : `OC Alkosto: ${d.ordenCompraAlkosto}`;
-      }
-
-      const correlativo = String(d.correlativo || d.numeroPedido || 'APP-FDV').trim();
-      const totalUSD = Number(d.totalUSD || 0);
-      const fecha = String(d.fechaPedido || new Date().toISOString().split('T')[0]).trim();
-      const ruta = String(d.ruta || d.vendedora || 'SAIRU VALLES / CUENTAS CLAVE 2').trim();
-      const cliente = String(d.sucursalNombre || 'ALKOSTO').trim();
-      const idCliente = String(d.sucursalCodigo || '').trim();
-      const createdAt = d.createdAt || new Date().toISOString();
-
-      const orderPayload = {
-        cliente,
-        id_cliente: idCliente,
-        ruta,
-        supervisor: '',
-        chofer: '',
-        observaciones: obs,
-        fecha,
-        total_pedido: totalUSD,
-        monto_pedido: totalUSD,
-        numero_pedido: correlativo,
-        articulos
-      };
-
-      rowsToInsert.push({
-        id: d.id,
-        numero_pedido: correlativo,
-        cliente,
-        id_cliente: idCliente,
-        ruta,
-        supervisor: '',
-        chofer: '',
-        observaciones: obs,
-        fecha,
-        total_pedido: totalUSD,
-        monto_pedido: totalUSD,
-        status: 'POR_VALIDAR',
-        articulos,
-        raw_order: orderPayload,
-        is_archived: false,
-        created_at: createdAt,
-        updated_at: new Date().toISOString(),
-        status_history: [
-          {
-            status: 'POR_VALIDAR',
-            department: 'Ventas',
-            changedBy: 'SAIRÚ VALLES',
-            timestamp: createdAt,
-            reason: 'Recibido en Sala de Espera desde App Alkosto (Sairú Valles)'
-          }
-        ]
-      });
+      rowsToUpsert.push(normOrder.dbRow);
     }
 
-    if (idsToNormalize.length > 0) {
-      await supabase
-        .from('orders')
-        .update({ status: 'POR_VALIDAR', reject_reason: null, updated_at: new Date().toISOString() })
-        .in('id', idsToNormalize);
+    if (rowsToUpsert.length > 0) {
+      await supabase.from('orders').upsert(rowsToUpsert, { onConflict: 'id' });
     }
 
-    if (rowsToInsert.length > 0) {
-      await supabase.from('orders').insert(rowsToInsert);
-    }
-
-    return rowsToInsert.length + idsToNormalize.length;
+    return rowsToUpsert.length;
   } catch (err) {
     console.warn('Background Sairú Firestore sync warning:', err);
     return 0;
@@ -771,9 +711,10 @@ router.put('/:id', async (req, res) => {
       updatedHistory.push(historyItem);
     }
 
-    // Si viene de Sala de Espera ('POR_VALIDAR') y pasa a 'PENDIENTE_CXC', asignamos correlativo consecutivo
+    // Si viene de Sala de Espera ('POR_VALIDAR' o 'ERROR_FORMATO') y pasa a 'PENDIENTE_CXC', asignamos correlativo consecutivo
+    const cameFromWaitingRoom = existingData.status === 'POR_VALIDAR' || existingData.status === 'ERROR_FORMATO';
     let finalCorrelativo = existingData.numero_pedido;
-    if (existingData.status === 'POR_VALIDAR' && status === 'PENDIENTE_CXC') {
+    if (cameFromWaitingRoom && status === 'PENDIENTE_CXC') {
       finalCorrelativo = await getNextCorrelativo();
       orderData.numero_pedido = finalCorrelativo;
     }
@@ -795,6 +736,13 @@ router.put('/:id', async (req, res) => {
       updated_at: new Date().toISOString()
     };
 
+    if (cameFromWaitingRoom && status === 'PENDIENTE_CXC') {
+      const prevNote = String(existingData.cxc_note || '');
+      if (prevNote.startsWith('ERROR_FORMATO:') || prevNote.startsWith('AVISO_PARSING:')) {
+        updateFields.cxc_note = null;
+      }
+    }
+
     const { error: updateErr } = await supabase
       .from('orders')
       .update(updateFields)
@@ -802,7 +750,7 @@ router.put('/:id', async (req, res) => {
 
     if (updateErr) throw updateErr;
 
-    if (existingData.status === 'POR_VALIDAR' && status === 'PENDIENTE_CXC') {
+    if (cameFromWaitingRoom && status === 'PENDIENTE_CXC') {
       markSairuFirestoreProcessed(id).catch(() => {});
     }
 

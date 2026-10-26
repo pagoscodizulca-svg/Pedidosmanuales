@@ -26,14 +26,14 @@ export interface OrderData {
 }
 
 export interface StatusHistoryItem {
-  status: "CREADO" | "POR_VALIDAR" | "MODIFICADO_VENTAS_REENVIADO" | "PENDIENTE_CXC" | "PENDIENTE_FACTURACION" | "COMPLETADO" | "RECHAZADO";
+  status: "CREADO" | "POR_VALIDAR" | "ERROR_FORMATO" | "MODIFICADO_VENTAS_REENVIADO" | "PENDIENTE_CXC" | "PENDIENTE_FACTURACION" | "COMPLETADO" | "RECHAZADO";
   department: "Ventas" | "Cuentas por Cobrar" | "Facturación" | "Auditoría" | "Sistema";
   changedBy: string;
   timestamp: string;
   reason?: string;
 }
 
-export type OrderStatus = "POR_VALIDAR" | "PENDIENTE_CXC" | "PENDIENTE_FACTURACION" | "COMPLETADO" | "RECHAZADO" | "SISTEMA";
+export type OrderStatus = "POR_VALIDAR" | "ERROR_FORMATO" | "PENDIENTE_CXC" | "PENDIENTE_FACTURACION" | "COMPLETADO" | "RECHAZADO" | "SISTEMA";
 
 export interface DbOrder {
   id: string;
