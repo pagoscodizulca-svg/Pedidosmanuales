@@ -179,6 +179,26 @@ let activeRealtimeChannel: any = null;
 let activeRealtimeSubscribers = 0;
 let realtimeBurstTimeout: ReturnType<typeof setTimeout> | null = null;
 
+const DELETED_IDS_STORAGE_KEY = 'codizulca-deleted-order-ids';
+const deletedOrderIdsClientMemory = new Set<string>((() => {
+  try {
+    const raw = localStorage.getItem(DELETED_IDS_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+})());
+
+function rememberDeletedIdsClient(ids: string[]) {
+  for (const id of ids) {
+    if (id) deletedOrderIdsClientMemory.add(String(id));
+  }
+  try {
+    const arr = Array.from(deletedOrderIdsClientMemory).slice(-500);
+    localStorage.setItem(DELETED_IDS_STORAGE_KEY, JSON.stringify(arr));
+  } catch {}
+}
+
 function isGhostTestOrder(o: DbOrder): boolean {
   if (!o) return false;
   const id = String(o.id || '').trim().toLowerCase();
@@ -270,6 +290,7 @@ function dedupeAndFilterOrders(list: DbOrder[]): DbOrder[] {
   const result: DbOrder[] = [];
   for (const item of list || []) {
     if (!item || !item.id || isGhostTestOrder(item)) continue;
+    if (deletedOrderIdsClientMemory.has(item.id)) continue;
     if (seen.has(item.id)) continue;
     seen.add(item.id);
     result.push(normalizeExternalChainOrder(item));
@@ -300,7 +321,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const isInitial = get().orders.length === 0;
     if (isInitial) set({ loading: true, error: null });
     try {
-      const [apiResult, directWaitingResult] = await Promise.allSettled([
+      const [apiResult, directWaitingResult, deletedResult] = await Promise.allSettled([
         apiFetch('/api/orders'),
         supabase
           .from('orders')
@@ -316,8 +337,20 @@ export const useAppStore = create<AppState>((set, get) => ({
             'POR_APROBAR',
             'RECIBIDO'
           ])
-          .order('created_at', { ascending: false })
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('deleted_orders')
+          .select('id')
+          .order('deleted_at', { ascending: false })
+          .limit(300)
       ]);
+
+      if (deletedResult.status === 'fulfilled' && Array.isArray(deletedResult.value.data)) {
+        const dbDeletedIds = deletedResult.value.data.map((r: any) => String(r.id)).filter(Boolean);
+        if (dbDeletedIds.length > 0) {
+          rememberDeletedIdsClient(dbDeletedIds);
+        }
+      }
 
       const directWaitingOrders: DbOrder[] =
         directWaitingResult.status === 'fulfilled' && Array.isArray(directWaitingResult.value.data)
@@ -384,7 +417,7 @@ export const useAppStore = create<AppState>((set, get) => ({
               const eventType = payload?.eventType;
               if (eventType === 'INSERT' || eventType === 'UPDATE') {
                 const newRow = payload.new;
-                if (newRow && newRow.id) {
+                if (newRow && newRow.id && !deletedOrderIdsClientMemory.has(String(newRow.id))) {
                   const mapped = normalizeExternalChainOrder(mapDirectSupabaseRowToDbOrder(newRow));
                   if (!isGhostTestOrder(mapped)) {
                     const current = get().orders;
@@ -395,18 +428,18 @@ export const useAppStore = create<AppState>((set, get) => ({
                     set({ orders: dedupeAndFilterOrders(nextOrders) });
                   }
                 }
+                // Reconciliación diferida con buffer solo en INSERT/UPDATE para ráfagas de 7+ pedidos simultáneos
+                if (realtimeBurstTimeout) clearTimeout(realtimeBurstTimeout);
+                realtimeBurstTimeout = setTimeout(() => {
+                  get().fetchOrders().catch(() => {});
+                }, 450);
               } else if (eventType === 'DELETE') {
                 const deletedId = payload?.old?.id;
                 if (deletedId) {
+                  rememberDeletedIdsClient([String(deletedId)]);
                   set({ orders: get().orders.filter(o => o.id !== deletedId) });
                 }
               }
-
-              // Reconciliación diferida con buffer para ráfagas de 7+ pedidos simultáneos
-              if (realtimeBurstTimeout) clearTimeout(realtimeBurstTimeout);
-              realtimeBurstTimeout = setTimeout(() => {
-                get().fetchOrders().catch(() => {});
-              }, 450);
             } catch (rtErr) {
               console.warn('Error en listener Real-Time de Sala de Espera:', rtErr);
             }
@@ -574,14 +607,24 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   deleteOrder: async (id) => {
     try {
-      const response = await apiFetch(`/api/orders/${id}`, {
-        method: 'DELETE'
-      });
-      if (!response.ok) throw new Error('Error al eliminar el pedido');
+      rememberDeletedIdsClient([id]);
       set({
         orders: get().orders.filter(o => o.id !== id),
         historyOrders: get().historyOrders.filter(o => o.id !== id)
       });
+
+      const { username } = getCurrentUserActor();
+      const nowIso = new Date().toISOString();
+
+      const [response] = await Promise.all([
+        apiFetch(`/api/orders/${id}`, { method: 'DELETE' }),
+        supabase.from('deleted_orders').upsert([{ id, deleted_at: nowIso, deleted_by: username }], { onConflict: 'id' }),
+        supabase.from('orders').delete().eq('id', id)
+      ]);
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || 'Error al eliminar el pedido');
+      }
     } catch (err: any) {
       set({ error: err.message });
       throw err;
@@ -590,17 +633,30 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   deleteBatchOrders: async (ids) => {
     try {
-      const response = await apiFetch('/api/orders/batch-delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids })
-      });
-      if (!response.ok) throw new Error('Error al eliminar pedidos en lote');
+      rememberDeletedIdsClient(ids);
       const idSet = new Set(ids);
       set({
         orders: get().orders.filter(o => !idSet.has(o.id)),
         historyOrders: get().historyOrders.filter(o => !idSet.has(o.id))
       });
+
+      const { username } = getCurrentUserActor();
+      const nowIso = new Date().toISOString();
+      const deletedRows = ids.map(id => ({ id, deleted_at: nowIso, deleted_by: username }));
+
+      const [response] = await Promise.all([
+        apiFetch('/api/orders/batch-delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids })
+        }),
+        supabase.from('deleted_orders').upsert(deletedRows, { onConflict: 'id' }),
+        supabase.from('orders').delete().in('id', ids)
+      ]);
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || 'Error al eliminar pedidos en lote');
+      }
     } catch (err: any) {
       set({ error: err.message });
       throw err;

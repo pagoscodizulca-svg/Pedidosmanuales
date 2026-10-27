@@ -136,19 +136,55 @@ async function markSairuFirestoreProcessed(id: string): Promise<void> {
   }
 }
 
-async function deleteFromSairuFirestore(ids: string[]): Promise<void> {
-  for (const id of ids) {
-    if (!String(id || '').startsWith('alk-')) continue;
+async function deleteFromSairuFirestore(ids: string[], deletedBy = 'Sistema'): Promise<void> {
+  const validIds = (ids || []).map(id => String(id || '').trim()).filter(Boolean);
+  if (validIds.length === 0) return;
+
+  for (const id of validIds) {
     deletedAlkostoIdsMemory.add(id);
   }
+
+  const nowIso = new Date().toISOString();
+  const deletedRows = validIds.map(id => ({
+    id,
+    deleted_at: nowIso,
+    deleted_by: deletedBy
+  }));
+
+  const externalTasks: Promise<any>[] = [
+    supabase.from('deleted_orders').upsert(deletedRows, { onConflict: 'id' })
+  ];
+
+  for (const id of validIds) {
+    if (!id.startsWith('alk-')) continue;
+    externalTasks.push(
+      fetch(`${SAIRU_FIRESTORE_BASE}/alkosto_orders/${encodeURIComponent(id)}`, {
+        method: 'DELETE'
+      }).catch(() => {}),
+      fetch(`${SAIRU_SUPABASE_PEDIDOS_URL}?id=eq.${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers: {
+          apikey: SAIRU_SUPABASE_KEY,
+          Authorization: `Bearer ${SAIRU_SUPABASE_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ status: 'ELIMINADO', updated_at: nowIso })
+      }).catch(() => {}),
+      fetch(`${SAIRU_SUPABASE_PEDIDOS_URL}?id=eq.${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: {
+          apikey: SAIRU_SUPABASE_KEY,
+          Authorization: `Bearer ${SAIRU_SUPABASE_KEY}`
+        }
+      }).catch(() => {})
+    );
+  }
+
+  await Promise.allSettled(externalTasks);
 }
 
-async function syncSairuFirestoreToSupabase(force = false): Promise<number> {
+async function syncSairuFirestoreToSupabase(_force = false): Promise<number> {
   try {
-    if (force) {
-      deletedAlkostoIdsMemory.clear();
-    }
-
     const [fsResResult, sbResResult] = await Promise.allSettled([
       fetch(`${SAIRU_FIRESTORE_BASE}:runQuery`, {
         method: 'POST',
@@ -202,7 +238,7 @@ async function syncSairuFirestoreToSupabase(force = false): Promise<number> {
             !testFsDocs.includes(d) &&
             d.id &&
             validExternalStatuses.has(st) &&
-            (force || !deletedAlkostoIdsMemory.has(d.id))
+            !deletedAlkostoIdsMemory.has(d.id)
           ) {
             candidateMap.set(d.id, d);
           }
@@ -220,7 +256,7 @@ async function syncSairuFirestoreToSupabase(force = false): Promise<number> {
             d.id &&
             !String(d.id).startsWith('test-int-') &&
             validExternalStatuses.has(st) &&
-            (force || !deletedAlkostoIdsMemory.has(d.id))
+            !deletedAlkostoIdsMemory.has(d.id)
           ) {
             if (!candidateMap.has(d.id)) {
               candidateMap.set(d.id, d);
@@ -238,16 +274,30 @@ async function syncSairuFirestoreToSupabase(force = false): Promise<number> {
     if (enviados.length === 0) return 0;
 
     const enviadoIds = enviados.map((d: any) => d.id);
-    const { data: existingInSup } = await supabase
-      .from('orders')
-      .select('id, status, numero_pedido, status_history, total_pedido, cxc_note, observaciones')
-      .in('id', enviadoIds);
+    const [{ data: existingInSup }, { data: deletedInSup }] = await Promise.all([
+      supabase
+        .from('orders')
+        .select('id, status, numero_pedido, status_history, total_pedido, cxc_note, observaciones')
+        .in('id', enviadoIds),
+      supabase
+        .from('deleted_orders')
+        .select('id')
+        .in('id', enviadoIds)
+    ]);
+
+    const persistedDeletedIds = new Set<string>((deletedInSup || []).map((r: any) => String(r.id)));
+    for (const delId of persistedDeletedIds) {
+      deletedAlkostoIdsMemory.add(delId);
+    }
 
     const existingMap = new Map<string, any>((existingInSup || []).map((r: any) => [r.id, r]));
     const rowsToUpsert: any[] = [];
     const nowIso = new Date().toISOString();
 
     for (const d of enviados) {
+      if (deletedAlkostoIdsMemory.has(d.id) || persistedDeletedIds.has(d.id)) {
+        continue;
+      }
       const parsed = parseAndValidateChainOrders(d);
       if (parsed.orders.length === 0) continue;
       const normOrder = parsed.orders[0];
@@ -544,10 +594,10 @@ router.get('/', async (req, res) => {
     
     const mergedMap = new Map<string, any>();
     for (const r of waitingQuery.data || []) {
-      if (r && r.id) mergedMap.set(r.id, r);
+      if (r && r.id && !deletedAlkostoIdsMemory.has(r.id)) mergedMap.set(r.id, r);
     }
     for (const r of activeQuery.data || []) {
-      if (r && r.id && !mergedMap.has(r.id)) mergedMap.set(r.id, r);
+      if (r && r.id && !deletedAlkostoIdsMemory.has(r.id) && !mergedMap.has(r.id)) mergedMap.set(r.id, r);
     }
     const allRows = Array.from(mergedMap.values());
 
@@ -579,7 +629,7 @@ router.get('/', async (req, res) => {
     }
 
     const orders = allRows
-      .filter(row => !isTestOrGhostOrder(row))
+      .filter(row => !isTestOrGhostOrder(row) && !deletedAlkostoIdsMemory.has(row.id))
       .map(row => {
         const o = mapSupabaseToDbOrder(row);
         o.isArchived = false;
@@ -616,7 +666,7 @@ router.post('/sync-alkosto', async (req, res) => {
       .order('created_at', { ascending: false });
 
     const waitingOrders = (waitingRows || [])
-      .filter(row => !isTestOrGhostOrder(row))
+      .filter(row => !isTestOrGhostOrder(row) && !deletedAlkostoIdsMemory.has(row.id))
       .map(row => {
         const o = mapSupabaseToDbOrder(row);
         o.isArchived = false;
@@ -1056,13 +1106,14 @@ router.delete('/:id', async (req, res) => {
   }
 
   try {
-    const { error } = await supabase
-      .from('orders')
-      .delete()
-      .eq('id', id);
+    deletedAlkostoIdsMemory.add(id);
+    const serverUser = getUserName(req);
+    const [{ error }] = await Promise.all([
+      supabase.from('orders').delete().eq('id', id),
+      deleteFromSairuFirestore([id], serverUser)
+    ]);
 
     if (error) throw error;
-    deleteFromSairuFirestore([id]).catch(() => {});
     res.json({ success: true, id });
   } catch (err: any) {
     console.error('Error deleting order:', err);
@@ -1084,13 +1135,16 @@ router.post('/batch-delete', async (req, res) => {
   }
 
   try {
-    const { error } = await supabase
-      .from('orders')
-      .delete()
-      .in('id', ids);
+    for (const id of ids) {
+      if (id) deletedAlkostoIdsMemory.add(String(id));
+    }
+    const serverUser = getUserName(req);
+    const [{ error }] = await Promise.all([
+      supabase.from('orders').delete().in('id', ids),
+      deleteFromSairuFirestore(ids, serverUser)
+    ]);
 
     if (error) throw error;
-    deleteFromSairuFirestore(ids).catch(() => {});
     res.json({ success: true, count: ids.length, deletedIds: ids });
   } catch (err: any) {
     console.error('Error in batch delete orders:', err);
