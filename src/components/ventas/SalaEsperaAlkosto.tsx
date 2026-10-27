@@ -1,37 +1,80 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useAppStore } from '../../store/index';
-import { Clock, Eye, Smartphone, Search, CheckCircle2, Building2, Store, ShoppingBag, Trash2, Loader2, RefreshCw, AlertTriangle } from 'lucide-react';
+import {
+  Clock,
+  Eye,
+  Smartphone,
+  Search,
+  CheckCircle2,
+  Building2,
+  Store,
+  ShoppingBag,
+  Trash2,
+  Loader2,
+  RefreshCw,
+  AlertTriangle,
+  MapPin,
+  FileText,
+  UserCheck,
+  Package,
+  Hash
+} from 'lucide-react';
 import { OrderModal } from '../shared/OrderModal';
 import { DbOrder } from '../../types';
 
-const ALKOSTO_CODES = new Set(['7497', '7498', '7499', '7500', '7501', '7502', '7503', '7680', '7905', '8160', '8306', '1560', '007497', '007498', '007499', '007500', '007501', '007502', '007503', '007680', '007905', '008160', '008306', '001560']);
-const FAMILIA_CODES = new Set(['7489', '7490', '7491', '7492', '7493', '7494', '8229', '5373', '007489', '007490', '007491', '007492', '007493', '007494', '008229', '005373']);
+const ALKOSTO_CODES = new Set([
+  '7497', '7498', '7499', '7500', '7501', '7502', '7503', '7680', '7905', '8160', '8306', '1560',
+  '007497', '007498', '007499', '007500', '007501', '007502', '007503', '007680', '007905', '008160', '008306', '001560'
+]);
+const FAMILIA_CODES = new Set([
+  '7489', '7490', '7491', '7492', '7493', '7494', '8229', '5373',
+  '007489', '007490', '007491', '007492', '007493', '007494', '008229', '005373'
+]);
 
-function detectOrderChain(o: DbOrder): 'ALKOSTO' | 'FAMILIA' | 'OTRA' {
-  const cli = String(o.order?.cliente || '').toUpperCase();
+const WAITING_ROOM_STATUSES = new Set([
+  'POR_VALIDAR',
+  'POR VALIDAR',
+  'ERROR_FORMATO',
+  'PENDIENTE',
+  'EN_ESPERA',
+  'EN ESPERA',
+  'ENVIADO',
+  'POR_APROBAR',
+  'RECIBIDO'
+]);
+
+export function detectOrderChain(o: DbOrder): 'ALKOSTO' | 'FAMILIA' | 'OTRA' {
+  const cad = String(o.order?.cadena || '').trim().toUpperCase();
+  const cli = String(o.order?.sucursal_cliente || o.order?.cliente || '').trim().toUpperCase();
   const idCli = String(o.order?.id_cliente || '').trim().toUpperCase();
-  const orig = String(o.order?.origen || '').toUpperCase();
-  const obs = String(o.order?.observaciones || '').toUpperCase();
-  const id = String(o.id || '').toUpperCase();
+  const idCliPadded = /^\d+$/.test(idCli) ? idCli.padStart(6, '0') : idCli;
+  const orig = String(o.order?.origen || '').trim().toUpperCase();
+  const obs = String(o.order?.observacion_formateada || o.order?.observaciones || '').trim().toUpperCase();
+  const id = String(o.id || '').trim().toUpperCase();
+  const combined = `${cad} ${cli} ${idCli} ${orig} ${obs}`;
 
   if (
+    cad.includes('FAMILIA') ||
     cli.includes('FAMILIA') ||
     orig.includes('FAMILIA') ||
     obs.includes('OC FAMILIA') ||
     id.startsWith('ALK-FC') ||
     FAMILIA_CODES.has(idCli) ||
-    /\bFC0?[1-7]\b|\bFCOP\b/.test(`${cli} ${idCli} ${obs}`)
+    FAMILIA_CODES.has(idCliPadded) ||
+    /\bFC0?[1-7]\b|\bFCOP\b/.test(combined)
   ) {
     return 'FAMILIA';
   }
 
   if (
+    cad.includes('ALKOSTO') ||
     cli.includes('ALKOSTO') ||
     orig.includes('ALKOSTO') ||
     obs.includes('OC ALKOSTO') ||
     id.startsWith('ALK-AK') ||
     ALKOSTO_CODES.has(idCli) ||
-    /\bAK0?[1-9]\b|\bAK10\b|\bAKOP\b/.test(`${cli} ${idCli} ${obs}`)
+    ALKOSTO_CODES.has(idCliPadded) ||
+    /\bAK0?[1-9]\b|\bAK10\b|\bAKOP\b/.test(combined)
   ) {
     return 'ALKOSTO';
   }
@@ -39,23 +82,138 @@ function detectOrderChain(o: DbOrder): 'ALKOSTO' | 'FAMILIA' | 'OTRA' {
   return 'OTRA';
 }
 
+export function extractOrderReferenceMeta(o: DbOrder): {
+  formattedOrderId: string;
+  clientCode: string;
+  chainLabel: string;
+  sedeName: string;
+  numeroOc: string;
+  direccionDespacho: string;
+  vendedorCanal: string;
+  validItemCount: number;
+  verifiedTotal: number;
+  standardizedObs: string;
+} {
+  const ord = o.order || ({} as any);
+  const chainType = detectOrderChain(o);
+  const chainLabel =
+    chainType === 'FAMILIA'
+      ? 'FAMILIA CENTER'
+      : chainType === 'ALKOSTO'
+        ? 'ALKOSTO'
+        : 'SIN CLASIFICAR / REVISIÓN';
+
+  const rawNum = String(ord.numero_pedido || '').trim();
+  const shortIdFallback = String(o.id || '')
+    .replace(/^alk-(?:doc|ak\d+|fc\d+)-/i, '')
+    .slice(0, 8)
+    .toUpperCase();
+  const formattedOrderId =
+    rawNum && rawNum !== 'APP-FDV' && rawNum !== 'PENDIENTE' && rawNum !== 'AUTO'
+      ? `#${rawNum.padStart(4, '0')}`
+      : shortIdFallback
+        ? `#${shortIdFallback}`
+        : '#S/N';
+
+  const rawClientCode = String(ord.id_cliente || '').trim();
+  const clientCode = /^\d+$/.test(rawClientCode) ? rawClientCode.padStart(6, '0') : rawClientCode || 'S/C';
+
+  const sedeName = String(ord.sucursal_cliente || ord.cliente || 'SUCURSAL POR DEFINIR').trim().toUpperCase();
+  const rawObs = String(ord.observacion_formateada || ord.observaciones || '').trim();
+
+  const ocMatch =
+    rawObs.match(/OC\s+(?:ALKOSTO|FAMILIA(?:\s+CENTER)?|OTRA\s+CADENA)\s*:\s*([A-Z0-9-]+)/i) ||
+    rawObs.match(/\b(?:OC|ORDEN\s+DE\s+COMPRA)\s*[:#]?\s*([A-Z0-9-]{4,})/i);
+  const numeroOc = String(ord.numero_oc || (ocMatch ? ocMatch[1] : '') || 'S/N').trim();
+
+  const dirFromObsMatch = rawObs.match(/\|\s*Dir:\s*(.+)$/i);
+  const cleanedRawObsDir = rawObs
+    .replace(/\s*\|\s*OC\s+(?:ALKOSTO|FAMILIA(?:\s+CENTER)?|OTRA\s+CADENA)\s*:\s*[^|]+/gi, '')
+    .replace(/\b(?:OC|ORDEN\s+DE\s+COMPRA)\s*[:#]?\s*[A-Z0-9-]{4,}\s*\|?\s*/gi, '')
+    .replace(/\bRef\.\s*Cadenas\s*:\s*#[A-Z0-9-]+\s*\|?\s*/gi, '')
+    .replace(/^.*\|\s*Dir:\s*/i, '')
+    .trim();
+
+  const direccionDespacho = String(
+    ord.direccion_despacho || (dirFromObsMatch ? dirFromObsMatch[1].trim() : cleanedRawObsDir) || sedeName
+  ).trim();
+
+  const vendedorCanal = String(ord.vendedor || ord.ruta || 'SAIRU VALLES / CUENTAS CLAVE 2').trim().toUpperCase();
+
+  const arts = Array.isArray(ord.articulos) ? ord.articulos : [];
+  const validItems = arts.filter(
+    a =>
+      a &&
+      (String(a.descripcion || '').trim() !== '' ||
+        String(a.codigo || '').trim() !== '' ||
+        Number(a.cantidad_solicitada) > 0) &&
+      String(a.codigo || '').toUpperCase() !== 'ERROR'
+  );
+  const validItemCount = validItems.length;
+
+  const calculatedSum = Number(
+    arts
+      .reduce((acc, a) => {
+        const cant = Number(a?.cantidad_solicitada) || 0;
+        const precio = Number(a?.precio_unitario) || 0;
+        const sub = cant > 0 && precio > 0 ? Number((cant * precio).toFixed(2)) : Number(a?.sub_total) || 0;
+        return acc + sub;
+      }, 0)
+      .toFixed(2)
+  );
+  const declaredTotal = Number(ord.total_pedido ?? ord.monto_pedido ?? 0);
+  const verifiedTotal =
+    calculatedSum > 0
+      ? calculatedSum
+      : Number.isFinite(declaredTotal) && declaredTotal > 0
+        ? Number(declaredTotal.toFixed(2))
+        : 0;
+
+  const standardizedObs =
+    rawObs.includes(' | OC ') && rawObs.includes(' | Dir: ')
+      ? rawObs
+      : `${sedeName} | OC ${chainType === 'FAMILIA' ? 'FAMILIA CENTER' : 'ALKOSTO'}: ${numeroOc} | Dir: ${direccionDespacho}`;
+
+  return {
+    formattedOrderId,
+    clientCode,
+    chainLabel,
+    sedeName,
+    numeroOc,
+    direccionDespacho,
+    vendedorCanal,
+    validItemCount,
+    verifiedTotal,
+    standardizedObs
+  };
+}
+
 export const SalaEsperaAlkosto: React.FC = () => {
-  const { orders, updateFullOrder, deleteOrder, deleteBatchOrders, syncAlkostoOrders } = useAppStore();
+  const {
+    orders,
+    updateFullOrder,
+    deleteOrder,
+    deleteBatchOrders,
+    syncAlkostoOrders,
+    subscribeToWaitingRoomRealtime
+  } = useAppStore();
   const [selectedOrder, setSelectedOrder] = useState<DbOrder | null>(null);
-  const [selectedChain, setSelectedChain] = useState<'TODAS' | 'ALKOSTO' | 'FAMILIA'>('TODAS');
+  const [selectedChain, setSelectedChain] = useState<'TODAS' | 'ALKOSTO' | 'FAMILIA' | 'OTRA'>('TODAS');
   const [search, setSearch] = useState('');
-  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [approvingIds, setApprovingIds] = useState<Set<string>>(new Set());
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isClearingAll, setIsClearingAll] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [feedbackBanner, setFeedbackBanner] = useState<{ type: 'success' | 'error' | 'warning'; message: string } | null>(null);
 
-  // Sincronizar automáticamente con la App de Alkosto de Sairú al cargar el módulo, al recuperar foco y cada 15s
+  // Sincronización en Tiempo Real (Supabase postgres_changes) + Polling Seguro con la App FDV
   useEffect(() => {
+    const unsubscribeRealtime = subscribeToWaitingRoomRealtime();
     syncAlkostoOrders().catch(() => {});
 
     const interval = setInterval(() => {
       syncAlkostoOrders().catch(() => {});
-    }, 15000);
+    }, 10000);
 
     const handleVisibilityOrFocus = () => {
       if (document.visibilityState === 'visible') {
@@ -67,27 +225,44 @@ export const SalaEsperaAlkosto: React.FC = () => {
     document.addEventListener('visibilitychange', handleVisibilityOrFocus);
 
     return () => {
+      unsubscribeRealtime();
       clearInterval(interval);
       window.removeEventListener('focus', handleVisibilityOrFocus);
       document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
     };
-  }, [syncAlkostoOrders]);
+  }, [syncAlkostoOrders, subscribeToWaitingRoomRealtime]);
 
   const handleManualSync = async () => {
     setIsSyncing(true);
+    setFeedbackBanner(null);
     try {
-      await syncAlkostoOrders();
+      const count = await syncAlkostoOrders();
+      setFeedbackBanner({
+        type: 'success',
+        message:
+          count > 0
+            ? `Sincronización completada: se incorporaron/actualizaron ${count} pedido(s) desde la App FDV.`
+            : 'Sincronización al día: el 100% de los pedidos emitidos por vendedores están en pantalla.'
+      });
+    } catch (err: any) {
+      setFeedbackBanner({
+        type: 'error',
+        message: `Error al sincronizar con App FDV: ${err?.message || 'Verifique su conexión'}`
+      });
     } finally {
       setIsSyncing(false);
     }
   };
 
-  // Filtramos todos los pedidos pendientes de la sala de espera (incluyendo aquellos con Error de Formato)
+  // Filtrado tolerante a fallos: ningún pedido entrante desde App FDV queda oculto
   const pendingOrders = useMemo(() => {
-    return orders.filter(o => o.status === 'POR_VALIDAR' || o.status === 'ERROR_FORMATO');
+    return orders.filter(o => {
+      const st = String(o.status || '').trim().toUpperCase();
+      return WAITING_ROOM_STATUSES.has(st);
+    });
   }, [orders]);
 
-  // Clasificación por cadenas
+  // Clasificación insensible a mayúsculas/minúsculas y espacios (con pestaña Sin Clasificar / Revisión)
   const alkostoOrders = useMemo(() => {
     return pendingOrders.filter(o => detectOrderChain(o) === 'ALKOSTO');
   }, [pendingOrders]);
@@ -96,32 +271,48 @@ export const SalaEsperaAlkosto: React.FC = () => {
     return pendingOrders.filter(o => detectOrderChain(o) === 'FAMILIA');
   }, [pendingOrders]);
 
-  // Totales acumulados
+  const sinClasificarOrders = useMemo(() => {
+    return pendingOrders.filter(o => detectOrderChain(o) === 'OTRA');
+  }, [pendingOrders]);
+
+  // Cuadre matemático de KPIs: suma dinámica verificada del 100% de los pedidos en Sala de Espera
   const totalMontoGeneral = useMemo(() => {
-    return pendingOrders.reduce((sum, o) => sum + Number(o.order?.total_pedido || o.order?.monto_pedido || 0), 0);
+    return Number(
+      pendingOrders.reduce((sum, o) => sum + extractOrderReferenceMeta(o).verifiedTotal, 0).toFixed(2)
+    );
   }, [pendingOrders]);
 
   // Filtrado según la pestaña activa y el buscador
   const filteredOrders = useMemo(() => {
     let list = pendingOrders;
     if (selectedChain === 'ALKOSTO') list = alkostoOrders;
-    if (selectedChain === 'FAMILIA') list = familiaOrders;
+    else if (selectedChain === 'FAMILIA') list = familiaOrders;
+    else if (selectedChain === 'OTRA') list = sinClasificarOrders;
 
     if (search.trim()) {
       const term = search.toLowerCase().trim();
       list = list.filter(o => {
-        const ord = o.order || ({} as any);
+        const meta = extractOrderReferenceMeta(o);
         return (
-          (ord.cliente || '').toLowerCase().includes(term) ||
-          (ord.id_cliente || '').toLowerCase().includes(term) ||
-          (ord.ruta || '').toLowerCase().includes(term) ||
-          (ord.observaciones || '').toLowerCase().includes(term)
+          meta.sedeName.toLowerCase().includes(term) ||
+          meta.clientCode.toLowerCase().includes(term) ||
+          meta.formattedOrderId.toLowerCase().includes(term) ||
+          meta.numeroOc.toLowerCase().includes(term) ||
+          meta.direccionDespacho.toLowerCase().includes(term) ||
+          meta.vendedorCanal.toLowerCase().includes(term)
         );
       });
     }
 
     return list;
-  }, [pendingOrders, selectedChain, alkostoOrders, familiaOrders, search]);
+  }, [pendingOrders, selectedChain, alkostoOrders, familiaOrders, sinClasificarOrders, search]);
+
+  // Log de diagnóstico de auditoría en consola (Fase 4.3)
+  useEffect(() => {
+    console.info(
+      `[Auditoría Sala de Espera] Total pedidos activos en BD: ${orders.length} | En Sala de Espera (BD): ${pendingOrders.length} | Clasificación [Alkosto: ${alkostoOrders.length} + Familia Center: ${familiaOrders.length} + Sin Clasificar: ${sinClasificarOrders.length} = ${alkostoOrders.length + familiaOrders.length + sinClasificarOrders.length}] | Renderizados en vista actual (${selectedChain}): ${filteredOrders.length} | Monto en Espera Verificado: $${totalMontoGeneral.toFixed(2)}`
+    );
+  }, [orders.length, pendingOrders.length, alkostoOrders.length, familiaOrders.length, sinClasificarOrders.length, selectedChain, filteredOrders.length, totalMontoGeneral]);
 
   const getChainBadge = (o: DbOrder) => {
     const chain = detectOrderChain(o);
@@ -140,51 +331,151 @@ export const SalaEsperaAlkosto: React.FC = () => {
       );
     }
     return (
-      <span className="inline-flex items-center gap-1 bg-slate-100 text-slate-700 border border-slate-200 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">
-        <ShoppingBag size={11} /> APP FDV
+      <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">
+        <ShoppingBag size={11} className="text-amber-700" /> SIN CLASIFICAR / REVISIÓN
       </span>
     );
   };
 
   const handleQuickApprove = async (order: DbOrder) => {
-    if (!window.confirm(`¿Aprobar pedido de "${order.order.cliente}" y enviarlo directamente a Cuentas por Cobrar?`)) {
+    if (approvingIds.has(order.id)) return; // Protección anti doble-clic
+
+    const meta = extractOrderReferenceMeta(order);
+    const isFormatError =
+      order.status === 'ERROR_FORMATO' || String(order.cxcNote || '').startsWith('ERROR_FORMATO:');
+
+    // Validación estricta antes de pasar a Ventas / CxC (Fase 3.2)
+    const missingReasons: string[] = [];
+    if (isFormatError) {
+      missingReasons.push('el pedido presenta alerta de Error de Formato');
+    }
+    if (meta.validItemCount === 0 || meta.verifiedTotal <= 0) {
+      missingReasons.push('debe tener al menos 1 renglón válido con cantidad y precio mayores a $0.00');
+    }
+    if (!meta.sedeName || meta.sedeName === 'SUCURSAL POR DEFINIR') {
+      missingReasons.push('falta identificar el cliente/sucursal');
+    }
+    if (!meta.numeroOc || meta.numeroOc === 'S/N') {
+      missingReasons.push('falta el número de Orden de Compra (OC)');
+    }
+    if (!meta.direccionDespacho) {
+      missingReasons.push('falta la Dirección de Despacho');
+    }
+
+    if (missingReasons.length > 0) {
+      setFeedbackBanner({
+        type: 'warning',
+        message: `Atención (${meta.formattedOrderId} - ${meta.sedeName}): Antes de aprobar a CxC ${missingReasons.join(', ')}. Se abrió "Validar Formato" para completar los datos.`
+      });
+      setSelectedOrder({
+        ...order,
+        order: {
+          ...order.order,
+          numero_oc: meta.numeroOc,
+          direccion_despacho: meta.direccionDespacho,
+          observaciones: meta.standardizedObs,
+          observacion_formateada: meta.standardizedObs,
+          total_pedido: meta.verifiedTotal,
+          monto_pedido: meta.verifiedTotal
+        }
+      });
       return;
     }
-    setApprovingId(order.id);
+
+    if (
+      !window.confirm(
+        `¿Aprobar el pedido ${meta.formattedOrderId} de "${meta.sedeName}" (OC: ${meta.numeroOc} | Monto: $${meta.verifiedTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}) y enviarlo a Cuentas por Cobrar?`
+      )
+    ) {
+      return;
+    }
+
+    setApprovingIds(prev => new Set(prev).add(order.id));
+    setFeedbackBanner(null);
     try {
-      await updateFullOrder(order.id, order.order, 'PENDIENTE_CXC');
+      await updateFullOrder(
+        order.id,
+        {
+          ...order.order,
+          numero_oc: meta.numeroOc,
+          direccion_despacho: meta.direccionDespacho,
+          observaciones: meta.standardizedObs,
+          observacion_formateada: meta.standardizedObs,
+          total_pedido: meta.verifiedTotal,
+          monto_pedido: meta.verifiedTotal
+        },
+        'PENDIENTE_CXC'
+      );
+      setFeedbackBanner({
+        type: 'success',
+        message: `Pedido ${meta.formattedOrderId} (${meta.sedeName}) aprobado exitosamente y enviado a Cuentas por Cobrar.`
+      });
+    } catch (err: any) {
+      setFeedbackBanner({
+        type: 'error',
+        message: `No se pudo aprobar el pedido ${meta.formattedOrderId}: ${err?.message || 'Error de comunicación con el servidor'}`
+      });
     } finally {
-      setApprovingId(null);
+      setApprovingIds(prev => {
+        const next = new Set(prev);
+        next.delete(order.id);
+        return next;
+      });
     }
   };
 
   const handleDeleteOrder = async (order: DbOrder) => {
-    const clientName = order.order?.cliente || 'este pedido';
-    if (!window.confirm(`¿Estás seguro de eliminar el pedido de "${clientName}" de la sala de espera? Esta acción no se puede deshacer.`)) {
+    if (deletingId === order.id) return;
+    const meta = extractOrderReferenceMeta(order);
+    if (
+      !window.confirm(
+        `¿Estás seguro de eliminar el pedido ${meta.formattedOrderId} de "${meta.sedeName}" de la Sala de Espera? Esta acción no se puede deshacer.`
+      )
+    ) {
       return;
     }
     setDeletingId(order.id);
+    setFeedbackBanner(null);
     try {
       await deleteOrder(order.id);
+      setFeedbackBanner({
+        type: 'success',
+        message: `Pedido ${meta.formattedOrderId} (${meta.sedeName}) eliminado correctamente de la Sala de Espera.`
+      });
     } catch (err: any) {
-      alert(`Error al eliminar pedido: ${err.message}`);
+      setFeedbackBanner({
+        type: 'error',
+        message: `Error al eliminar pedido: ${err?.message || 'Intente nuevamente'}`
+      });
     } finally {
       setDeletingId(null);
     }
   };
 
   const handleClearWaitingRoom = async () => {
-    if (pendingOrders.length === 0) return;
+    if (pendingOrders.length === 0 || isClearingAll) return;
     const count = pendingOrders.length;
-    if (!window.confirm(`¿Estás seguro de ELIMINAR TODOS los ${count} pedidos de la sala de espera? Esta acción eliminará permanentemente estos pedidos del sistema.`)) {
+    if (
+      !window.confirm(
+        `¿Estás seguro de ELIMINAR TODOS los ${count} pedidos de la Sala de Espera? Esta acción eliminará permanentemente estos pedidos del sistema.`
+      )
+    ) {
       return;
     }
     setIsClearingAll(true);
+    setFeedbackBanner(null);
     try {
       const ids = pendingOrders.map(o => o.id);
       await deleteBatchOrders(ids);
+      setFeedbackBanner({
+        type: 'success',
+        message: `Se eliminaron los ${count} pedidos de la Sala de Espera.`
+      });
     } catch (err: any) {
-      alert(`Error al vaciar la sala de espera: ${err.message}`);
+      setFeedbackBanner({
+        type: 'error',
+        message: `Error al vaciar la Sala de Espera: ${err?.message || 'Intente nuevamente'}`
+      });
     } finally {
       setIsClearingAll(false);
     }
@@ -245,10 +536,56 @@ export const SalaEsperaAlkosto: React.FC = () => {
         </div>
       </div>
 
+      {/* Alertas visuales de operación y clasificación */}
+      {feedbackBanner && (
+        <div
+          className={`mt-4 p-3.5 rounded-xl border flex items-center justify-between gap-3 text-xs font-bold ${
+            feedbackBanner.type === 'error'
+              ? 'bg-red-50 border-red-200 text-red-800'
+              : feedbackBanner.type === 'warning'
+                ? 'bg-amber-50 border-amber-300 text-amber-900'
+                : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {feedbackBanner.type === 'success' ? (
+              <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+            ) : (
+              <AlertTriangle size={16} className="shrink-0" />
+            )}
+            <span>{feedbackBanner.message}</span>
+          </div>
+          <button
+            onClick={() => setFeedbackBanner(null)}
+            className="text-[11px] font-black uppercase px-2 py-0.5 rounded hover:bg-black/5 shrink-0"
+          >
+            Cerrar
+          </button>
+        </div>
+      )}
+
+      {sinClasificarOrders.length > 0 && (
+        <div className="mt-3 p-3 bg-amber-50 border border-amber-300 rounded-xl flex items-center justify-between gap-3 text-xs text-amber-900">
+          <div className="flex items-center gap-2 font-bold">
+            <AlertTriangle size={15} className="text-amber-600 shrink-0" />
+            <span>
+              Atención: Hay <strong>{sinClasificarOrders.length}</strong> pedido(s) con nombre de cadena no estándar en la pestaña{' '}
+              <strong>"Sin Clasificar / Revisión"</strong>.
+            </span>
+          </div>
+          <button
+            onClick={() => setSelectedChain('OTRA')}
+            className="bg-amber-200 hover:bg-amber-300 text-amber-950 font-black text-[11px] px-3 py-1 rounded-lg uppercase tracking-wide shrink-0 transition-colors"
+          >
+            Ver Revisión ({sinClasificarOrders.length})
+          </button>
+        </div>
+      )}
+
       {/* Pestañas de Cadenas y Buscador */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mt-4 mb-5">
-        {/* Tabs de Filtro */}
-        <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200 w-fit">
+        {/* Tabs de Filtro (Todas = Alkosto + Familia Center + Sin Clasificar) */}
+        <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200 w-fit flex-wrap">
           <button
             onClick={() => setSelectedChain('TODAS')}
             className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition-all ${
@@ -285,16 +622,31 @@ export const SalaEsperaAlkosto: React.FC = () => {
               {familiaOrders.length}
             </span>
           </button>
+          <button
+            onClick={() => setSelectedChain('OTRA')}
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-black transition-all ${
+              selectedChain === 'OTRA'
+                ? 'bg-amber-600 text-white shadow-sm'
+                : sinClasificarOrders.length > 0
+                  ? 'text-amber-800 bg-amber-100/80 hover:bg-amber-200/80'
+                  : 'text-slate-500 hover:text-amber-700'
+            }`}
+          >
+            <span>Sin Clasificar / Revisión</span>
+            <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${selectedChain === 'OTRA' ? 'bg-amber-700 text-white' : 'bg-slate-200 text-slate-700'}`}>
+              {sinClasificarOrders.length}
+            </span>
+          </button>
         </div>
 
-        {/* Buscador de Sucursal / Tienda */}
+        {/* Buscador de Sucursal / Tienda / OC */}
         <div className="relative w-full md:w-72">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar sucursal, ID o vendedor..."
+            placeholder="Buscar sucursal, OC, ID o vendedor..."
             className="w-full pl-9 pr-3 py-1.5 text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-codizulca-cyan focus:bg-white transition-all"
           />
         </div>
@@ -316,8 +668,8 @@ export const SalaEsperaAlkosto: React.FC = () => {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredOrders.map(o => {
-            const itemCount = Array.isArray(o.order.articulos) ? o.order.articulos.filter(a => a.descripcion).length : 0;
-            const isApproving = approvingId === o.id;
+            const meta = extractOrderReferenceMeta(o);
+            const isApproving = approvingIds.has(o.id);
             const isFormatError = o.status === 'ERROR_FORMATO' || String(o.cxcNote || '').startsWith('ERROR_FORMATO:');
             const parsingNotice = String(o.cxcNote || '').replace(/^(ERROR_FORMATO|AVISO_PARSING):\s*/i, '').trim();
 
@@ -329,25 +681,27 @@ export const SalaEsperaAlkosto: React.FC = () => {
                 }`}
               >
                 <div>
-                  {/* Encabezado Tarjeta */}
+                  {/* Encabezado Tarjeta: ID Pedido + Cadena + ID Cliente + Estado */}
                   <div className="flex justify-between items-start gap-2 mb-3">
-                    <div className="flex-1 overflow-hidden">
-                      <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
+                        <span className="inline-flex items-center gap-0.5 bg-slate-900 text-white font-mono text-[10px] font-black px-2 py-0.5 rounded-md tracking-wider">
+                          <Hash size={10} className="text-cyan-400" />
+                          {meta.formattedOrderId.replace(/^#/, '')}
+                        </span>
                         {getChainBadge(o)}
-                        {o.order.id_cliente && (
-                          <span className="bg-slate-100 text-slate-600 font-mono text-[10px] font-bold px-1.5 py-0.5 rounded">
-                            ID: {o.order.id_cliente}
-                          </span>
-                        )}
+                        <span className="bg-slate-100 text-slate-700 border border-slate-200 font-mono text-[10px] font-bold px-1.5 py-0.5 rounded">
+                          ID: {meta.clientCode}
+                        </span>
                       </div>
-                      <h3 className="font-extrabold text-slate-800 text-sm uppercase tracking-tight line-clamp-2" title={o.order.cliente}>
-                        {o.order.cliente}
+                      <h3 className="font-extrabold text-slate-900 text-sm uppercase tracking-tight break-words leading-snug">
+                        {meta.sedeName}
                       </h3>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                       {isFormatError ? (
                         <span className="inline-flex items-center gap-1 bg-red-100 border border-red-300 text-red-800 text-[10px] px-2 py-0.5 rounded font-black uppercase tracking-wider">
-                          <AlertTriangle size={11} /> ERROR DE FORMATO
+                          <AlertTriangle size={11} /> ERROR FORMATO
                         </span>
                       ) : (
                         <span className="bg-amber-50 border border-amber-200 text-amber-700 text-[10px] px-2 py-0.5 rounded font-black uppercase tracking-wider">
@@ -376,33 +730,64 @@ export const SalaEsperaAlkosto: React.FC = () => {
                         <AlertTriangle size={11} />
                         {isFormatError ? 'Requiere Corrección Manual:' : 'Ajuste Automático de Auditoría OCR:'}
                       </p>
-                      <p className="line-clamp-3" title={parsingNotice}>{parsingNotice}</p>
+                      <p className="whitespace-normal break-words">{parsingNotice}</p>
                     </div>
                   )}
 
-                  {/* Datos Operativos */}
-                  <div className="space-y-1 text-xs text-slate-500 mb-4 bg-slate-50/70 p-2.5 rounded-xl border border-slate-100">
-                    <div className="flex justify-between">
-                      <span className="text-slate-400 font-medium">Vendedor:</span>
-                      <span className="font-bold text-slate-700 truncate max-w-[150px]">{o.order.ruta || 'SAIRU VALLES'}</span>
+                  {/* Datos Operativos: Vendedor/Canal y Conteo Exacto de Artículos */}
+                  <div className="space-y-1.5 text-xs text-slate-600 mb-3 bg-slate-50/80 p-3 rounded-xl border border-slate-200/80">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="text-slate-400 font-bold inline-flex items-center gap-1 shrink-0">
+                        <UserCheck size={12} className="text-slate-400" /> Vendedor:
+                      </span>
+                      <span className="font-extrabold text-slate-800 text-right break-words">
+                        {meta.vendedorCanal}
+                      </span>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400 font-medium">Artículos:</span>
-                      <span className="font-bold text-slate-700">{itemCount} {itemCount === 1 ? 'renglón' : 'renglones'}</span>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-slate-400 font-bold inline-flex items-center gap-1 shrink-0">
+                        <Package size={12} className="text-slate-400" /> Artículos:
+                      </span>
+                      <span className="font-extrabold text-slate-800 bg-white px-2 py-0.5 rounded border border-slate-200">
+                        {meta.validItemCount} {meta.validItemCount === 1 ? 'renglón' : 'renglones'}
+                      </span>
                     </div>
-                    {o.order.observaciones && (
-                      <div className="text-[11px] text-slate-500 italic truncate pt-1 border-t border-slate-200/60" title={o.order.observaciones}>
-                        "{o.order.observaciones}"
+
+                    {/* Bloque de Referencia Unificado y Limpio (OC + Sede + Dirección de Despacho Completa sin truncar) */}
+                    <div className="pt-2 mt-1.5 border-t border-slate-200/80 space-y-1 text-[11px]">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-extrabold text-slate-500 uppercase inline-flex items-center gap-1">
+                          <FileText size={11} className="text-amber-600" /> Orden de Compra (OC):
+                        </span>
+                        <span className="font-mono font-black text-amber-900 bg-amber-100/80 border border-amber-300 px-2 py-0.5 rounded">
+                          {meta.numeroOc}
+                        </span>
                       </div>
-                    )}
+                      <div className="flex items-start gap-1.5 text-slate-700 pt-0.5">
+                        <MapPin size={12} className="text-codizulca-red shrink-0 mt-0.5" />
+                        <div className="text-[11px] leading-snug whitespace-normal break-words">
+                          <span className="font-extrabold text-slate-700">Sede / Despacho: </span>
+                          <span className="font-semibold text-slate-600">{meta.sedeName} — {meta.direccionDespacho}</span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
                 
-                {/* Footer Tarjeta: Monto y Botones */}
+                {/* Footer Tarjeta: Monto Verificado y Botones */}
                 <div>
                   <div className="bg-slate-50 rounded-xl p-3 border border-slate-200 mb-3 flex justify-between items-center">
-                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Monto Pedido</span>
-                    <span className="text-lg font-black text-slate-900">${(o.order.total_pedido || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    <div>
+                      <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">
+                        Monto Pedido (Verificado)
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-medium">
+                        Suma real de {meta.validItemCount} {meta.validItemCount === 1 ? 'renglón' : 'renglones'}
+                      </span>
+                    </div>
+                    <span className="text-lg font-black text-slate-900">
+                      ${meta.verifiedTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
                   </div>
                   
                   <div className="flex items-center gap-2">
@@ -416,7 +801,20 @@ export const SalaEsperaAlkosto: React.FC = () => {
                       <span className="hidden sm:inline">Eliminar</span>
                     </button>
                     <button
-                      onClick={() => setSelectedOrder(o)}
+                      onClick={() =>
+                        setSelectedOrder({
+                          ...o,
+                          order: {
+                            ...o.order,
+                            numero_oc: meta.numeroOc,
+                            direccion_despacho: meta.direccionDespacho,
+                            observaciones: meta.standardizedObs,
+                            observacion_formateada: meta.standardizedObs,
+                            total_pedido: meta.verifiedTotal,
+                            monto_pedido: meta.verifiedTotal
+                          }
+                        })
+                      }
                       className="flex-1 flex items-center justify-center gap-1.5 bg-slate-100 text-slate-700 py-2.5 rounded-xl text-xs font-extrabold hover:bg-slate-200 transition-all border border-slate-200"
                     >
                       <Eye size={14} /> Validar Formato
@@ -426,7 +824,11 @@ export const SalaEsperaAlkosto: React.FC = () => {
                       disabled={isApproving}
                       className="flex-1 flex items-center justify-center gap-1.5 bg-codizulca-cyan text-slate-800 py-2.5 rounded-xl text-xs font-black hover:bg-cyan-400 hover:shadow-sm transition-all border border-cyan-300 disabled:opacity-50"
                     >
-                      <CheckCircle2 size={14} className="text-slate-800" />
+                      {isApproving ? (
+                        <Loader2 size={14} className="animate-spin text-slate-800" />
+                      ) : (
+                        <CheckCircle2 size={14} className="text-slate-800" />
+                      )}
                       {isApproving ? 'Aprobando...' : 'Aprobar a CxC'}
                     </button>
                   </div>

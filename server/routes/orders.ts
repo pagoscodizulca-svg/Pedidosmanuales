@@ -25,24 +25,49 @@ function isTestOrGhostOrder(row: any): boolean {
   return false;
 }
 
+const WAITING_ROOM_RAW_STATUSES = new Set([
+  'POR_VALIDAR',
+  'POR VALIDAR',
+  'PENDIENTE',
+  'EN_ESPERA',
+  'EN ESPERA',
+  'ENVIADO',
+  'POR_APROBAR',
+  'RECIBIDO'
+]);
+
 // Detecta pedidos enviados desde la app externa de cadenas (Sairú / Alkosto / Familia Center)
-// que entraron con status 'PENDIENTE_CXC' y correlativo corto de 4 dígitos sin pasar por Sala de Espera
+// que entraron con un estado pendiente/en espera o con 'PENDIENTE_CXC' y correlativo corto sin pasar por Sala de Espera
 function isUnvalidatedExternalChainOrder(row: any): boolean {
   if (!row) return false;
   const id = String(row.id || '').trim().toLowerCase();
-  const num = String(row.numero_pedido ?? row.order?.numero_pedido ?? '').trim();
+  const num = String(row.numero_pedido ?? row.order?.numero_pedido ?? '').trim().toUpperCase();
+  const rawStatus = String(row.status || '').trim().toUpperCase();
+
+  if (rawStatus !== 'POR_VALIDAR' && WAITING_ROOM_RAW_STATUSES.has(rawStatus)) {
+    return true;
+  }
+
   const history = Array.isArray(row.status_history)
     ? row.status_history
     : Array.isArray(row.statusHistory)
       ? row.statusHistory
       : [];
 
-  if (id.startsWith('alk-') && row.status === 'PENDIENTE_CXC') {
-    const hasShortCorrelativo = num.length <= 4 || num === 'APP-FDV' || num === 'PENDIENTE';
+  if (rawStatus === 'PENDIENTE_CXC') {
+    const hasExternalCorrelativo =
+      id.startsWith('alk-') ||
+      num.length <= 4 ||
+      num === 'APP-FDV' ||
+      num === 'PENDIENTE' ||
+      num === 'AUTO';
     const wasValidatedInManuales = history.some(
-      (h: any) => h && h.status === 'PENDIENTE_CXC' && h.reason === 'Validado y actualizado'
+      (h: any) =>
+        h &&
+        h.status === 'PENDIENTE_CXC' &&
+        (String(h.reason || '').includes('Validado') || String(h.reason || '').includes('Aprobado'))
     );
-    if (hasShortCorrelativo && !wasValidatedInManuales) {
+    if (hasExternalCorrelativo && !wasValidatedInManuales && (id.startsWith('alk-') || num === 'APP-FDV' || num === 'PENDIENTE')) {
       return true;
     }
   }
@@ -57,7 +82,7 @@ const SAIRU_SUPABASE_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51ZGx0Ymd5ZXd5aWtscWR5dWprIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MTgzMDA3OCwiZXhwIjoyMTA3NDA2MDc4fQ.k92vdZiuVkTzAWNK8Fq71m1Xi_MoWtpx_eRQcZTw1cA';
 const deletedAlkostoIdsMemory = new Set<string>();
 let lastSairuSyncRun = 0;
-const SAIRU_SYNC_INTERVAL_MS = 15 * 1000;
+const SAIRU_SYNC_INTERVAL_MS = 3 * 1000; // Intervalo corto (3s) para capturar lotes de 7+ pedidos en ráfaga sin bloqueos
 
 function parseFirestoreVal(v: any): any {
   if (!v || typeof v !== 'object') return v;
@@ -134,7 +159,7 @@ async function syncSairuFirestoreToSupabase(force = false): Promise<number> {
           }
         })
       }),
-      fetch(`${SAIRU_SUPABASE_PEDIDOS_URL}?select=*&status=eq.ENVIADO&order=created_at.desc&limit=50`, {
+      fetch(`${SAIRU_SUPABASE_PEDIDOS_URL}?select=*&order=created_at.desc&limit=500`, {
         headers: {
           apikey: SAIRU_SUPABASE_KEY,
           Authorization: `Bearer ${SAIRU_SUPABASE_KEY}`
@@ -143,6 +168,16 @@ async function syncSairuFirestoreToSupabase(force = false): Promise<number> {
     ]);
 
     const candidateMap = new Map<string, any>();
+    const validExternalStatuses = new Set([
+      'ENVIADO',
+      'PENDIENTE',
+      'EN_ESPERA',
+      'EN ESPERA',
+      'POR_VALIDAR',
+      'POR VALIDAR',
+      'RECIBIDO',
+      'POR_APROBAR'
+    ]);
 
     if (fsResResult.status === 'fulfilled' && fsResResult.value.ok) {
       const rawItems = await fsResResult.value.json().catch(() => []);
@@ -162,10 +197,11 @@ async function syncSairuFirestoreToSupabase(force = false): Promise<number> {
         }
 
         for (const d of fsDocs) {
+          const st = String(d.estado || d.status || '').trim().toUpperCase();
           if (
             !testFsDocs.includes(d) &&
             d.id &&
-            String(d.estado || '').toUpperCase() === 'ENVIADO' &&
+            validExternalStatuses.has(st) &&
             (force || !deletedAlkostoIdsMemory.has(d.id))
           ) {
             candidateMap.set(d.id, d);
@@ -178,15 +214,20 @@ async function syncSairuFirestoreToSupabase(force = false): Promise<number> {
       const sbDocs = await sbResResult.value.json().catch(() => []);
       if (Array.isArray(sbDocs)) {
         for (const d of sbDocs) {
+          const st = String(d?.status || d?.estado || '').trim().toUpperCase();
           if (
             d &&
             d.id &&
             !String(d.id).startsWith('test-int-') &&
-            String(d.status || '').toUpperCase() === 'ENVIADO' &&
+            validExternalStatuses.has(st) &&
             (force || !deletedAlkostoIdsMemory.has(d.id))
           ) {
             if (!candidateMap.has(d.id)) {
               candidateMap.set(d.id, d);
+            } else {
+              // Enriquecer con campos de Supabase si faltaban en Firestore (ej. orden_compra_alkosto)
+              const prev = candidateMap.get(d.id);
+              candidateMap.set(d.id, { ...d, ...prev, orden_compra_alkosto: prev.ordenCompraAlkosto || d.orden_compra_alkosto });
             }
           }
         }
@@ -199,7 +240,7 @@ async function syncSairuFirestoreToSupabase(force = false): Promise<number> {
     const enviadoIds = enviados.map((d: any) => d.id);
     const { data: existingInSup } = await supabase
       .from('orders')
-      .select('id, status, numero_pedido, status_history, total_pedido, cxc_note')
+      .select('id, status, numero_pedido, status_history, total_pedido, cxc_note, observaciones')
       .in('id', enviadoIds);
 
     const existingMap = new Map<string, any>((existingInSup || []).map((r: any) => [r.id, r]));
@@ -213,9 +254,16 @@ async function syncSairuFirestoreToSupabase(force = false): Promise<number> {
 
       const existing = existingMap.get(d.id);
       if (existing) {
+        const obsActual = String(existing.observaciones || '');
+        const existingRawStatus = String(existing.status || '').trim().toUpperCase();
+        const isWaitingStatus = WAITING_ROOM_RAW_STATUSES.has(existingRawStatus) || existingRawStatus === 'ERROR_FORMATO';
+        const lacksStandardObs =
+          isWaitingStatus && (!obsActual.includes(' | OC ') || !obsActual.includes(' | Dir: '));
+
         const needsNormalization =
           isUnvalidatedExternalChainOrder(existing) ||
-          ((existing.status === 'POR_VALIDAR' || existing.status === 'ERROR_FORMATO') &&
+          lacksStandardObs ||
+          (isWaitingStatus &&
             Number(existing.total_pedido) !== Number(normOrder.orderData.total_pedido) &&
             !String(existing.cxc_note || '').includes('AVISO_PARSING'));
 
@@ -245,21 +293,94 @@ async function syncSairuFirestoreToSupabase(force = false): Promise<number> {
   }
 }
 
-async function ensureSairuSyncIfDue(): Promise<void> {
+async function ensureSairuSyncIfDue(force = false): Promise<void> {
   const now = Date.now();
-  if (now - lastSairuSyncRun >= SAIRU_SYNC_INTERVAL_MS) {
+  if (force || now - lastSairuSyncRun >= SAIRU_SYNC_INTERVAL_MS) {
     lastSairuSyncRun = now;
     await Promise.race([
-      syncSairuFirestoreToSupabase(false),
-      new Promise(resolve => setTimeout(resolve, 3500))
+      syncSairuFirestoreToSupabase(force),
+      new Promise(resolve => setTimeout(resolve, 8000))
     ]).catch(() => {});
   }
 }
 
 function mapSupabaseToDbOrder(row: any): DbOrder {
+  const rawStatus = String(row.status || '').trim().toUpperCase();
+  const normalizedStatus = (
+    WAITING_ROOM_RAW_STATUSES.has(rawStatus) ? 'POR_VALIDAR' : rawStatus
+  ) as OrderStatus;
+  const rawOrd = row.raw_order && typeof row.raw_order === 'object' ? row.raw_order : {};
+  const rawArticulosSource =
+    Array.isArray(row.articulos) && row.articulos.length > 0
+      ? row.articulos
+      : Array.isArray(rawOrd.articulos) && rawOrd.articulos.length > 0
+        ? rawOrd.articulos
+        : Array.isArray(rawOrd.items) && rawOrd.items.length > 0
+          ? rawOrd.items
+          : Array.isArray(rawOrd.renglones) && rawOrd.renglones.length > 0
+            ? rawOrd.renglones
+            : [];
+
+  const articulos = rawArticulosSource.map((it: any) => {
+    const cant = Number(it?.cantidad_solicitada ?? it?.cantidadCajas ?? it?.cantidad ?? 0);
+    const precio = Number(it?.precio_unitario ?? it?.precioUnitarioUSD ?? it?.precio ?? 0);
+    const rawSub = Number(it?.sub_total ?? it?.subtotalUSD ?? it?.subtotal ?? 0);
+    const subTotal =
+      cant > 0 && precio > 0
+        ? Number((cant * precio).toFixed(2))
+        : Number.isFinite(rawSub) && rawSub >= 0
+          ? Number(rawSub.toFixed(2))
+          : 0;
+    return {
+      codigo: String(it?.codigo ?? it?.sku ?? '').trim(),
+      descripcion: String(it?.descripcion ?? it?.producto ?? '').trim(),
+      unidad_medida: String(it?.unidad_medida ?? it?.presentacion ?? 'BULTO').trim(),
+      cantidad_solicitada: Number.isFinite(cant) ? cant : 0,
+      cantidad_despachada: Number(it?.cantidad_despachada ?? 0) || 0,
+      precio_unitario: Number.isFinite(precio) ? precio : 0,
+      sub_total: subTotal
+    };
+  });
+
+  const calculatedTotal = Number(
+    articulos.reduce((acc: number, it: any) => acc + (Number(it.sub_total) || 0), 0).toFixed(2)
+  );
+  const declaredTotal = Number(row.total_pedido ?? row.monto_pedido ?? rawOrd.monto_pedido ?? 0);
+  const finalTotal =
+    calculatedTotal > 0 &&
+    (declaredTotal <= 0 ||
+      Number.isNaN(declaredTotal) ||
+      ((normalizedStatus === 'POR_VALIDAR' || normalizedStatus === 'ERROR_FORMATO') &&
+        Math.abs(declaredTotal - calculatedTotal) > 0.5))
+      ? calculatedTotal
+      : Number.isFinite(declaredTotal)
+        ? Number(declaredTotal.toFixed(2))
+        : 0;
+
+  const obsText = String(row.observaciones || rawOrd.observacion_formateada || rawOrd.observaciones || '').trim();
+  const ocMatch =
+    obsText.match(/OC\s+(?:ALKOSTO|FAMILIA(?:\s+CENTER)?|OTRA\s+CADENA)\s*:\s*([A-Z0-9-]+)/i) ||
+    obsText.match(/\b(?:OC|ORDEN\s+DE\s+COMPRA)\s*[:#]?\s*([A-Z0-9-]{4,})/i);
+  const extractedOc =
+    rawOrd.numero_oc ||
+    rawOrd.ordenCompraAlkosto ||
+    rawOrd.orden_compra_alkosto ||
+    (ocMatch ? ocMatch[1].trim() : undefined);
+
+  const dirMatch = obsText.match(/\|\s*Dir:\s*(.+)$/i);
+  const extractedDir =
+    rawOrd.direccion_despacho ||
+    rawOrd.direccionEntrega ||
+    (dirMatch
+      ? dirMatch[1].trim()
+      : obsText
+          .replace(/\s*\|\s*OC\s+(?:ALKOSTO|FAMILIA(?:\s+CENTER)?|OTRA\s+CADENA)\s*:\s*[^|]+/gi, '')
+          .replace(/\b(?:OC|ORDEN\s+DE\s+COMPRA)\s*[:#]?\s*[A-Z0-9-]{4,}\s*\|?\s*/gi, '')
+          .trim() || undefined);
+
   return {
     id: row.id,
-    status: row.status as OrderStatus,
+    status: normalizedStatus,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     statusHistory: row.status_history || [],
@@ -268,16 +389,25 @@ function mapSupabaseToDbOrder(row: any): DbOrder {
     factNote: row.fact_note || undefined,
     isArchived: Boolean(row.is_archived),
     order: {
-      cliente: row.cliente || '',
-      id_cliente: row.id_cliente || '',
-      ruta: row.ruta || '',
-      supervisor: row.supervisor || '',
-      chofer: row.chofer || '',
-      observaciones: row.observaciones || '',
-      fecha: row.fecha || '',
-      articulos: row.articulos || [],
-      numero_pedido: row.numero_pedido || '',
-      total_pedido: row.total_pedido || row.monto_pedido || 0,
+      cliente: row.cliente || rawOrd.sucursal_cliente || rawOrd.cliente || '',
+      sucursal_cliente: rawOrd.sucursal_cliente || row.cliente || '',
+      cadena: rawOrd.cadena || rawOrd.origen || undefined,
+      numero_oc: extractedOc,
+      direccion_despacho: extractedDir,
+      observacion_formateada: obsText,
+      vendedor: row.ruta || rawOrd.vendedor || '',
+      total_renglones: articulos.length,
+      id_cliente: row.id_cliente || rawOrd.id_cliente || '',
+      ruta: row.ruta || rawOrd.vendedor || '',
+      supervisor: row.supervisor || rawOrd.supervisor || '',
+      chofer: row.chofer || rawOrd.chofer || '',
+      observaciones: obsText,
+      fecha: row.fecha || rawOrd.fecha || '',
+      articulos,
+      numero_pedido: row.numero_pedido || rawOrd.numero_pedido || '',
+      total_pedido: finalTotal,
+      monto_pedido: finalTotal,
+      origen: rawOrd.cadena || rawOrd.origen || undefined,
     }
   };
 }
@@ -374,8 +504,8 @@ function triggerCutoffIfDue() {
   }
 }
 
-// Columnas requeridas para los pedidos activos (se omite raw_order para reducir payload >60%)
-const ACTIVE_ORDERS_COLUMNS = 'id, status, created_at, updated_at, status_history, reject_reason, cxc_note, fact_note, is_archived, cliente, id_cliente, ruta, supervisor, chofer, observaciones, fecha, articulos, numero_pedido, total_pedido, monto_pedido';
+// Columnas requeridas para los pedidos activos (incluye raw_order para conservar metadatos completos de OC, sucursal y dirección)
+const ACTIVE_ORDERS_COLUMNS = 'id, status, created_at, updated_at, status_history, reject_reason, cxc_note, fact_note, is_archived, cliente, id_cliente, ruta, supervisor, chofer, observaciones, fecha, articulos, numero_pedido, total_pedido, monto_pedido, raw_order';
 
 // GET todos los pedidos activos (optimizado para respuesta instantánea y sincronización garantizada de Sala de Espera)
 router.get('/', async (req, res) => {
@@ -383,7 +513,8 @@ router.get('/', async (req, res) => {
     // Se dispara en segundo plano si ya pasaron 6 horas (no bloquea la respuesta HTTP)
     triggerCutoffIfDue();
     // Asegura que las órdenes de compra cargadas hoy en la app de Sairú estén sincronizadas antes de responder
-    await ensureSairuSyncIfDue();
+    const forceSync = req.query.forceSync === '1' || req.query.forceSync === 'true';
+    await ensureSairuSyncIfDue(forceSync);
     
     const [activeQuery, waitingQuery] = await Promise.all([
       supabase
@@ -395,7 +526,17 @@ router.get('/', async (req, res) => {
       supabase
         .from('orders')
         .select(ACTIVE_ORDERS_COLUMNS)
-        .in('status', ['POR_VALIDAR', 'ERROR_FORMATO'])
+        .in('status', [
+          'POR_VALIDAR',
+          'POR VALIDAR',
+          'ERROR_FORMATO',
+          'PENDIENTE',
+          'EN_ESPERA',
+          'EN ESPERA',
+          'ENVIADO',
+          'POR_APROBAR',
+          'RECIBIDO'
+        ])
         .order('created_at', { ascending: false })
     ]);
       
@@ -461,7 +602,17 @@ router.post('/sync-alkosto', async (req, res) => {
     const { data: waitingRows } = await supabase
       .from('orders')
       .select(ACTIVE_ORDERS_COLUMNS)
-      .in('status', ['POR_VALIDAR', 'ERROR_FORMATO'])
+      .in('status', [
+        'POR_VALIDAR',
+        'POR VALIDAR',
+        'ERROR_FORMATO',
+        'PENDIENTE',
+        'EN_ESPERA',
+        'EN ESPERA',
+        'ENVIADO',
+        'POR_APROBAR',
+        'RECIBIDO'
+      ])
       .order('created_at', { ascending: false });
 
     const waitingOrders = (waitingRows || [])
@@ -793,13 +944,34 @@ router.put('/:id', async (req, res) => {
       updatedHistory.push(historyItem);
     }
 
-    // Si viene de Sala de Espera ('POR_VALIDAR' o 'ERROR_FORMATO') y pasa a 'PENDIENTE_CXC', asignamos correlativo consecutivo
-    const cameFromWaitingRoom = existingData.status === 'POR_VALIDAR' || existingData.status === 'ERROR_FORMATO';
+    // Si viene de Sala de Espera ('POR_VALIDAR', 'ERROR_FORMATO' o estado pendiente externo) y pasa a 'PENDIENTE_CXC', asignamos correlativo consecutivo
+    const existingRawStatus = String(existingData.status || '').trim().toUpperCase();
+    const cameFromWaitingRoom =
+      WAITING_ROOM_RAW_STATUSES.has(existingRawStatus) || existingRawStatus === 'ERROR_FORMATO';
     let finalCorrelativo = existingData.numero_pedido;
     if (cameFromWaitingRoom && status === 'PENDIENTE_CXC') {
       finalCorrelativo = await getNextCorrelativo();
       orderData.numero_pedido = finalCorrelativo;
     }
+
+    const sanitizedArticulos = Array.isArray(orderData.articulos)
+      ? orderData.articulos.map((it: any) => {
+          const cant = Number(it?.cantidad_solicitada) || 0;
+          const precio = Number(it?.precio_unitario) || 0;
+          const subTotal = Number((cant * precio).toFixed(2));
+          return {
+            ...it,
+            cantidad_solicitada: cant,
+            precio_unitario: precio,
+            sub_total: subTotal
+          };
+        })
+      : [];
+    const recalculatedTotal = Number(
+      sanitizedArticulos.reduce((acc: number, it: any) => acc + (Number(it.sub_total) || 0), 0).toFixed(2)
+    );
+    const finalTotalPedido =
+      recalculatedTotal > 0 ? recalculatedTotal : Number(orderData.total_pedido || orderData.monto_pedido || 0);
 
     const updateFields: any = {
       numero_pedido: finalCorrelativo,
@@ -809,10 +981,17 @@ router.put('/:id', async (req, res) => {
       supervisor: orderData.supervisor,
       chofer: orderData.chofer,
       observaciones: orderData.observaciones,
-      total_pedido: orderData.total_pedido,
-      monto_pedido: orderData.monto_pedido,
-      articulos: orderData.articulos,
-      raw_order: { ...orderData, numero_pedido: finalCorrelativo },
+      total_pedido: finalTotalPedido,
+      monto_pedido: finalTotalPedido,
+      articulos: sanitizedArticulos,
+      raw_order: {
+        ...(existingData.raw_order && typeof existingData.raw_order === 'object' ? existingData.raw_order : {}),
+        ...orderData,
+        articulos: sanitizedArticulos,
+        total_pedido: finalTotalPedido,
+        monto_pedido: finalTotalPedido,
+        numero_pedido: finalCorrelativo
+      },
       status: status || existingData.status,
       status_history: updatedHistory,
       updated_at: new Date().toISOString()
@@ -825,18 +1004,21 @@ router.put('/:id', async (req, res) => {
       }
     }
 
-    const { error: updateErr } = await supabase
+    const { data: updatedRow, error: updateErr } = await supabase
       .from('orders')
       .update(updateFields)
-      .eq('id', id);
+      .eq('id', id)
+      .select(ACTIVE_ORDERS_COLUMNS)
+      .single();
 
-    if (updateErr) throw updateErr;
+    if (updateErr || !updatedRow) throw updateErr || new Error('No se pudo actualizar el pedido en base de datos');
 
     if (cameFromWaitingRoom && status === 'PENDIENTE_CXC') {
       markSairuFirestoreProcessed(id).catch(() => {});
     }
 
-    res.json({ success: true, numero_pedido: finalCorrelativo });
+    const mappedOrder = mapSupabaseToDbOrder(updatedRow);
+    res.json({ ...mappedOrder, success: true, numero_pedido: finalCorrelativo });
   } catch (err: any) {
     console.error('Update full order error:', err);
     res.status(500).json({ error: err.message });

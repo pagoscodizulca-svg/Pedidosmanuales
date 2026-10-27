@@ -157,9 +157,9 @@ test('Caso 3: Orden de Compra Consolidada de Familia Center (items[].tiendas) se
   assert.equal(result.orders.length, 3);
   assert.equal(result.validCount, 3);
 
-  const fc01 = result.orders.find(o => o.orderData.id_cliente === '007489')!;
-  const fc02 = result.orders.find(o => o.orderData.id_cliente === '007490')!;
-  const fc06 = result.orders.find(o => o.orderData.id_cliente === '007494')!;
+  const fc01 = result.orders.find(o => o.orderData.id_cliente === '007490')!;
+  const fc02 = result.orders.find(o => o.orderData.id_cliente === '007492')!;
+  const fc06 = result.orders.find(o => o.orderData.id_cliente === '007493')!;
 
   assert.ok(fc01 && fc02 && fc06);
   assert.equal(fc01.cadena, 'FAMILIA CENTER');
@@ -192,7 +192,7 @@ test('Caso 4: Fallback Tolerante a Fallos (ERROR_FORMATO) registra órdenes de A
   assert.equal(errOrder.status, 'ERROR_FORMATO');
   assert.equal(errOrder.hasFormatError, true);
   assert.equal(errOrder.cadena, 'FAMILIA CENTER');
-  assert.equal(errOrder.orderData.id_cliente, '007492');
+  assert.equal(errOrder.orderData.id_cliente, '007491');
   assert.ok(errOrder.cxc_note?.startsWith('ERROR_FORMATO:'));
   assert.equal(errOrder.orderData.articulos.length, 1);
   assert.equal(errOrder.orderData.articulos[0].codigo, 'ERROR');
@@ -210,4 +210,30 @@ test('Caso 5: Ignora limpiamente pedidos fantasma de pruebas QA (test-int-* / #9
   const result = parseAndValidateChainOrders(ghostPayload);
   assert.equal(result.orders.length, 0);
   assert.equal(result.ignoredTestCount, 1);
+});
+
+test('Caso 6: Lote completo de 7 pedidos en ráfaga desde APP FDV (FC01 a FC07) preserva el 100% de los 7 pedidos sin omitir intermedios', () => {
+  const batch7Orders = [
+    { id: 'alk-fc01-batch7', correlativo: '0061', ordenCompraAlkosto: '0000055800', sucursalCodigo: '7490', sucursalNombre: 'Familia Center 1 - Plaza Lago', direccionEntrega: 'Plaza Lago', estado: 'ENVIADO', items: [{ sku: '21', producto: 'MORTADELA DE POLLO DEL CORRAL 1KG', presentacion: 'CJ', cantidadCajas: 10, precioUnitarioUSD: 36, subtotalUSD: 360 }] },
+    { id: 'alk-fc02-batch7', correlativo: '0062', ordenCompraAlkosto: '0000055800', sucursalCodigo: '7492', sucursalNombre: 'Familia Center 2 - Urb Monte Claro', direccionEntrega: 'Calle 43 Urb Monte Claro', estado: 'PENDIENTE', items: [{ sku: '21', producto: 'MORTADELA DE POLLO DEL CORRAL 1KG', presentacion: 'CJ', cantidadCajas: 15, precioUnitarioUSD: 36, subtotalUSD: 540 }] },
+    { id: 'alk-fc03-batch7', correlativo: '0063', ordenCompraAlkosto: '0000055800', sucursalCodigo: '7494', sucursalNombre: 'Familia Center 3 - Coquivacoa', direccionEntrega: 'Calle J con Av 12 Coquivacoa', estado: 'EN_ESPERA', items: [{ sku: '21', producto: 'MORTADELA DE POLLO DEL CORRAL 1KG', presentacion: 'CJ', cantidadCajas: 20, precioUnitarioUSD: 36, subtotalUSD: 720 }] },
+    { id: 'alk-fc04-batch7', correlativo: '0064', ordenCompraAlkosto: '0000055800', sucursalCodigo: '7491', sucursalNombre: 'Familia Center 4 - Dr Quintero', direccionEntrega: 'Dr Quintero', estado: 'POR VALIDAR', items: [{ sku: '21', producto: 'MORTADELA DE POLLO DEL CORRAL 1KG', presentacion: 'CJ', cantidadCajas: 12, precioUnitarioUSD: 36, subtotalUSD: 432 }] },
+    { id: 'alk-fc05-batch7', correlativo: '0065', ordenCompraAlkosto: '0000055800', sucursalCodigo: '7489', sucursalNombre: 'Familia Center 5 - La Lago', direccionEntrega: 'La Lago', estado: 'POR_VALIDAR', items: [{ sku: '21', producto: 'MORTADELA DE POLLO DEL CORRAL 1KG', presentacion: 'CJ', cantidadCajas: 8, precioUnitarioUSD: 36, subtotalUSD: 288 }] },
+    { id: 'alk-fc06-batch7', correlativo: '0066', ordenCompraAlkosto: '0000055800', sucursalCodigo: '7493', sucursalNombre: 'Familia Center 6 - Los Olivos', direccionEntrega: 'Los Olivos', estado: 'RECIBIDO', items: [{ sku: '21', producto: 'MORTADELA DE POLLO DEL CORRAL 1KG', presentacion: 'CJ', cantidadCajas: 25, precioUnitarioUSD: 36, subtotalUSD: 900 }] },
+    { id: 'alk-fc07-batch7', correlativo: '0067', ordenCompraAlkosto: '0000055800', sucursalCodigo: '8229', sucursalNombre: 'Familia Center 7 - San Francisco', direccionEntrega: 'San Francisco', estado: 'ENVIADO', items: [{ sku: '21', producto: 'MORTADELA DE POLLO DEL CORRAL 1KG', presentacion: 'CJ', cantidadCajas: 30, precioUnitarioUSD: 36, subtotalUSD: 1080 }] }
+  ];
+
+  const result = parseAndValidateChainOrders(batch7Orders);
+  assert.equal(result.orders.length, 7, 'Deben procesarse los 7 pedidos del lote al 100%');
+  assert.equal(result.validCount, 7);
+  assert.equal(result.errorFormatoCount, 0);
+
+  for (const o of result.orders) {
+    assert.equal(o.status, 'POR_VALIDAR');
+    assert.equal(o.cadena, 'FAMILIA CENTER');
+    assert.equal(o.orderData.numero_oc, '0000055800');
+    assert.ok(o.orderData.direccion_despacho && o.orderData.direccion_despacho.length > 0);
+    assert.equal(o.orderData.articulos.length, 1);
+    assert.ok((o.orderData.total_pedido ?? 0) > 0);
+  }
 });

@@ -17,8 +17,21 @@ export const SeguimientoBlock: React.FC<SeguimientoBlockProps> = ({ orders, hide
   const [sellerTerm, setSellerTerm] = useState('');
   const [activeFilterTab, setActiveFilterTab] = useState<'TODOS' | 'PROCESO' | 'LISTOS' | 'RECHAZADOS'>('TODOS');
 
+  const isWaitingRoomOrder = (o: DbOrder) => {
+    const st = String(o.status || '').trim().toUpperCase();
+    return (
+      st === 'POR_VALIDAR' ||
+      st === 'POR VALIDAR' ||
+      st === 'ERROR_FORMATO' ||
+      st === 'PENDIENTE' ||
+      st === 'EN_ESPERA' ||
+      st === 'EN ESPERA' ||
+      st === 'ENVIADO'
+    );
+  };
+
   const filteredOrders = orders.filter(o => {
-    if (o.status === 'POR_VALIDAR') return false;
+    if (isWaitingRoomOrder(o)) return false;
     // Tab Filter
     if (activeFilterTab === 'PROCESO' && o.status !== 'PENDIENTE_FACTURACION' && o.status !== 'PENDIENTE_CXC') return false;
     if (activeFilterTab === 'LISTOS' && o.status !== 'COMPLETADO') return false;
@@ -58,7 +71,7 @@ export const SeguimientoBlock: React.FC<SeguimientoBlockProps> = ({ orders, hide
   const countProceso = orders.filter(o => o.status === 'PENDIENTE_FACTURACION' || o.status === 'PENDIENTE_CXC').length;
   const countListos = orders.filter(o => o.status === 'COMPLETADO').length;
   const countRechazados = orders.filter(o => o.status === 'RECHAZADO').length;
-  const countTodos = orders.filter(o => o.status !== 'POR_VALIDAR').length;
+  const countTodos = orders.filter(o => !isWaitingRoomOrder(o)).length;
 
   // ---- Selección para imprimir ----
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());

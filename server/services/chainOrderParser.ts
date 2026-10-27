@@ -14,27 +14,27 @@ export interface ChainStoreDefinition {
 }
 
 export const CHAIN_STORES_CATALOG: ChainStoreDefinition[] = [
-  // --- ALKOSTO ---
+  // --- ALKOSTO (Códigos Oficiales Saint Codizulca / APP FDV) ---
   { tag: 'AK01', codigo: '7498', codigoPadded: '007498', nombre: 'ALKOSTO 1 - SAN FELIPE', cadena: 'ALKOSTO', aliases: ['ALKOSTO 1', 'ALKOSTO 01', 'SAN FELIPE', 'AK01', 'AK1', '7498', '007498'] },
   { tag: 'AK02', codigo: '7499', codigoPadded: '007499', nombre: 'ALKOSTO 2 - PLAZA BARALT', cadena: 'ALKOSTO', aliases: ['ALKOSTO 2', 'ALKOSTO 02', 'PLAZA BARALT', 'AK02', 'AK2', '7499', '007499'] },
-  { tag: 'AK03', codigo: '7497', codigoPadded: '007497', nombre: 'ALKOSTO 3 - DELICIAS', cadena: 'ALKOSTO', aliases: ['ALKOSTO 3', 'ALKOSTO 03', 'DELICIAS', 'AK03', 'AK3', '7497', '007497'] },
+  { tag: 'AK03', codigo: '7497', codigoPadded: '007497', nombre: 'ALKOSTO 3 - DELICIAS', cadena: 'ALKOSTO', aliases: ['ALKOSTO 3', 'ALKOSTO 03', 'DELICIAS', 'LAS DELICIAS', 'AK03', 'AK3', '7497', '007497'] },
   { tag: 'AK04', codigo: '7500', codigoPadded: '007500', nombre: 'ALKOSTO 4 - COROMOTO', cadena: 'ALKOSTO', aliases: ['ALKOSTO 4', 'ALKOSTO 04', 'COROMOTO', 'CIRCUNVALACION 2', 'AK04', 'AK4', '7500', '007500'] },
   { tag: 'AK05', codigo: '7502', codigoPadded: '007502', nombre: 'ALKOSTO 5 - CABIMAS', cadena: 'ALKOSTO', aliases: ['ALKOSTO 5', 'ALKOSTO 05', 'CABIMAS', 'AK05', 'AK5', '7502', '007502'] },
-  { tag: 'AK06', codigo: '7501', codigoPadded: '007501', nombre: 'ALKOSTO 6 - LOS CACTUS', cadena: 'ALKOSTO', aliases: ['ALKOSTO 6', 'ALKOSTO 06', 'LOS CACTUS', 'SAN FRANCISCO', 'AK06', 'AK6', '7501', '007501'] },
-  { tag: 'AK07', codigo: '7503', codigoPadded: '007503', nombre: 'ALKOSTO 7 - BELLA VISTA', cadena: 'ALKOSTO', aliases: ['ALKOSTO 7', 'ALKOSTO 07', 'BELLA VISTA', 'CURVA DE MOLINA', 'AK07', 'AK7', '7503', '007503'] },
-  { tag: 'AK08', codigo: '7680', codigoPadded: '007680', nombre: 'ALKOSTO 8 - EL MILAGRO', cadena: 'ALKOSTO', aliases: ['ALKOSTO 8', 'ALKOSTO 08', 'EL MILAGRO', 'TRUJILLO', 'AK08', 'AK8', '7680', '007680'] },
-  { tag: 'AK09', codigo: '7905', codigoPadded: '007905', nombre: 'ALKOSTO 9 - ANTIGUO NASA ZONA INDUSTRIAL', cadena: 'ALKOSTO', aliases: ['ALKOSTO 9', 'ALKOSTO 09', 'ANTIGUO NASA', 'ZONA INDUSTRIAL', 'AK09', 'AK9', '7905', '007905'] },
-  { tag: 'AK10', codigo: '8306', codigoPadded: '008306', nombre: 'ALKOSTO 10 - LA LIMPIA', cadena: 'ALKOSTO', aliases: ['ALKOSTO 10', 'LA LIMPIA', 'AK10', '8160', '008160', '8306', '008306'] },
+  { tag: 'AK06', codigo: '7503', codigoPadded: '007503', nombre: 'ALKOSTO 6 - LOS CACTUS', cadena: 'ALKOSTO', aliases: ['ALKOSTO 6', 'ALKOSTO 06', 'LOS CACTUS', 'SAN FRANCISCO', 'AK06', 'AK6', '7503', '007503', '7501', '007501'] },
+  { tag: 'AK07', codigo: '7680', codigoPadded: '007680', nombre: 'ALKOSTO 7 - BELLA VISTA', cadena: 'ALKOSTO', aliases: ['ALKOSTO 7', 'ALKOSTO 07', 'BELLA VISTA', 'CURVA DE MOLINA', 'AK07', 'AK7', '7680', '007680'] },
+  { tag: 'AK08', codigo: '7905', codigoPadded: '007905', nombre: 'ALKOSTO 8 - TRUJILLO', cadena: 'ALKOSTO', aliases: ['ALKOSTO 8', 'ALKOSTO 08', 'TRUJILLO', 'EL MILAGRO', 'AK08', 'AK8', '7905', '007905'] },
+  { tag: 'AK09', codigo: '8160', codigoPadded: '008160', nombre: 'ALKOSTO 9 - ANTIGUO NASA ZONA INDUSTRIAL', cadena: 'ALKOSTO', aliases: ['ALKOSTO 9', 'ALKOSTO 09', 'ANTIGUO NASA', 'ZONA INDUSTRIAL', 'AK09', 'AK9', '8160', '008160'] },
+  { tag: 'AK10', codigo: '8306', codigoPadded: '008306', nombre: 'ALKOSTO 10 - LA LIMPIA', cadena: 'ALKOSTO', aliases: ['ALKOSTO 10', 'LA LIMPIA', 'AK10', '8306', '008306'] },
   { tag: 'AKOP', codigo: '1560', codigoPadded: '001560', nombre: 'ALKOSTO SEDE PRINCIPAL / AKOP', cadena: 'ALKOSTO', aliases: ['AKOP', 'ALKOSTO DONDE COMPRAR ES GANAR', '1560', '001560'] },
 
-  // --- FAMILIA CENTER ---
-  { tag: 'FC01', codigo: '7489', codigoPadded: '007489', nombre: 'FAMILIA CENTER 1 - PLAZA LAGO', cadena: 'FAMILIA CENTER', aliases: ['FAMILIA CENTER 1', 'FAMILIA CENTER 01', 'PLAZA LAGO', 'FC01', 'FC1', '7489', '007489'] },
-  { tag: 'FC02', codigo: '7490', codigoPadded: '007490', nombre: 'FAMILIA CENTER 2 - URB MONTE CLARO', cadena: 'FAMILIA CENTER', aliases: ['FAMILIA CENTER 2', 'FAMILIA CENTER 02', 'MONTE CLARO', 'FC02', 'FC2', '7490', '007490'] },
-  { tag: 'FC03', codigo: '7491', codigoPadded: '007491', nombre: 'FAMILIA CENTER 3', cadena: 'FAMILIA CENTER', aliases: ['FAMILIA CENTER 3', 'FAMILIA CENTER 03', 'FC03', 'FC3', '7491', '007491'] },
-  { tag: 'FC04', codigo: '7492', codigoPadded: '007492', nombre: 'FAMILIA CENTER 4 - DR QUINTERO', cadena: 'FAMILIA CENTER', aliases: ['FAMILIA CENTER 4', 'FAMILIA CENTER 04', 'DR QUINTERO', 'FC04', 'FC4', '7492', '007492'] },
-  { tag: 'FC05', codigo: '7493', codigoPadded: '007493', nombre: 'FAMILIA CENTER 5 - LA LAGO', cadena: 'FAMILIA CENTER', aliases: ['FAMILIA CENTER 5', 'FAMILIA CENTER 05', 'LA LAGO', 'FC05', 'FC5', '7493', '007493'] },
-  { tag: 'FC06', codigo: '7494', codigoPadded: '007494', nombre: 'FAMILIA CENTER 6 - LOS OLIVOS', cadena: 'FAMILIA CENTER', aliases: ['FAMILIA CENTER 6', 'FAMILIA CENTER 06', 'LOS OLIVOS', 'FC06', 'FC6', '7494', '007494'] },
-  { tag: 'FC07', codigo: '8229', codigoPadded: '008229', nombre: 'FAMILIA CENTER 7', cadena: 'FAMILIA CENTER', aliases: ['FAMILIA CENTER 7', 'FAMILIA CENTER 07', 'FC07', 'FC7', '8229', '008229'] },
+  // --- FAMILIA CENTER (Códigos Oficiales Saint Codizulca / APP FDV) ---
+  { tag: 'FC01', codigo: '7490', codigoPadded: '007490', nombre: 'FAMILIA CENTER 1 - PLAZA LAGO', cadena: 'FAMILIA CENTER', aliases: ['FAMILIA CENTER 1', 'FAMILIA CENTER 01', 'PLAZA LAGO', 'FC01', 'FC1', '7490', '007490'] },
+  { tag: 'FC02', codigo: '7492', codigoPadded: '007492', nombre: 'FAMILIA CENTER 2 - URB MONTE CLARO', cadena: 'FAMILIA CENTER', aliases: ['FAMILIA CENTER 2', 'FAMILIA CENTER 02', 'MONTE CLARO', 'URB MONTE CLARO', 'FC02', 'FC2', '7492', '007492'] },
+  { tag: 'FC03', codigo: '7494', codigoPadded: '007494', nombre: 'FAMILIA CENTER 3 - COQUIVACOA', cadena: 'FAMILIA CENTER', aliases: ['FAMILIA CENTER 3', 'FAMILIA CENTER 03', 'COQUIVACOA', 'FC03', 'FC3', '7494', '007494'] },
+  { tag: 'FC04', codigo: '7491', codigoPadded: '007491', nombre: 'FAMILIA CENTER 4 - DR QUINTERO', cadena: 'FAMILIA CENTER', aliases: ['FAMILIA CENTER 4', 'FAMILIA CENTER 04', 'DR QUINTERO', 'DR. QUINTERO', 'FC04', 'FC4', '7491', '007491'] },
+  { tag: 'FC05', codigo: '7489', codigoPadded: '007489', nombre: 'FAMILIA CENTER 5 - LA LAGO', cadena: 'FAMILIA CENTER', aliases: ['FAMILIA CENTER 5', 'FAMILIA CENTER 05', 'LA LAGO', 'FC05', 'FC5', '7489', '007489'] },
+  { tag: 'FC06', codigo: '7493', codigoPadded: '007493', nombre: 'FAMILIA CENTER 6 - LOS OLIVOS', cadena: 'FAMILIA CENTER', aliases: ['FAMILIA CENTER 6', 'FAMILIA CENTER 06', 'LOS OLIVOS', 'FC06', 'FC6', '7493', '007493'] },
+  { tag: 'FC07', codigo: '8229', codigoPadded: '008229', nombre: 'FAMILIA CENTER 7 - SAN FRANCISCO', cadena: 'FAMILIA CENTER', aliases: ['FAMILIA CENTER 7', 'FAMILIA CENTER 07', 'FC07', 'FC7', '8229', '008229'] },
   { tag: 'FCOP', codigo: '5373', codigoPadded: '005373', nombre: 'FAMILIA CENTER SEDE PRINCIPAL / FCOP', cadena: 'FAMILIA CENTER', aliases: ['FCOP', 'FAMILIA CENTER, C.A.', 'FAMILIA CENTER C.A.', '5373', '005373'] }
 ];
 
@@ -579,6 +579,7 @@ export function parseAndValidateChainOrders(rawPayload: unknown): BatchParseResu
       safeObj.sede ??
       '';
     const rawClientName =
+      safeObj.sucursal_cliente ??
       safeObj.cliente ??
       safeObj.sucursalNombre ??
       safeObj.sucursal_nombre ??
@@ -587,7 +588,7 @@ export function parseAndValidateChainOrders(rawPayload: unknown): BatchParseResu
       safeObj.sucursal ??
       safeObj.proveedorNombre ??
       '';
-    const rawOrigin = safeObj.origen ?? safeObj.clienteCadena ?? safeObj.tipo ?? '';
+    const rawOrigin = safeObj.cadena ?? safeObj.origen ?? safeObj.clienteCadena ?? safeObj.tipo ?? '';
 
     const resolvedStore = resolveChainStore(rawClientCode, rawClientName, rawOrigin);
     let cliente = resolvedStore.clienteNombre;
@@ -663,26 +664,43 @@ export function parseAndValidateChainOrders(rawPayload: unknown): BatchParseResu
       finalTotal = sumSubtotals;
     }
 
-    // 5. Observaciones y referencia de Orden de Compra (OC)
-    const ocNum = String(
+    // 5. Observaciones estandarizadas ("{Sucursal/Ciudad} | OC {Cadena}: {numero_oc} | Dir: {direccion_despacho}")
+    const ocNumRaw = String(
+      safeObj.numero_oc ??
       safeObj.orden_compra ??
       safeObj.ordenCompraAlkosto ??
       safeObj.orden_compra_alkosto ??
       safeObj.ordenNro ??
-      safeObj.numero_oc ??
       safeObj.numeroOrden ??
       safeObj.nroOrden ??
       ''
     ).trim();
 
-    let obs = String(safeObj.observaciones ?? safeObj.direccionEntrega ?? '').trim();
-    if (ocNum && !obs.toUpperCase().includes(ocNum.toUpperCase())) {
-      const ocLabel = cadena === 'FAMILIA CENTER' ? `OC Familia: ${ocNum}` : `OC Alkosto: ${ocNum}`;
-      obs = obs ? `${obs} | ${ocLabel}` : ocLabel;
-    }
-    if (!obs) {
-      obs = `Enviado desde App FDV (${cadena})`;
-    }
+    // Si el número de OC venía embebido dentro de observaciones, extraerlo
+    const rawObsText = String(
+      safeObj.observacion_formateada ?? safeObj.observaciones ?? safeObj.direccion_despacho ?? safeObj.direccionEntrega ?? ''
+    ).trim();
+    const embeddedOcMatch =
+      rawObsText.match(/OC\s+(?:ALKOSTO|FAMILIA(?:\s+CENTER)?)\s*:\s*([A-Z0-9-]+)/i) ||
+      rawObsText.match(/\b(?:OC|ORDEN\s+DE\s+COMPRA)\s*[:#]?\s*([A-Z0-9-]{4,})/i);
+    const ocNum = ocNumRaw || (embeddedOcMatch ? embeddedOcMatch[1].trim() : 'S/N');
+
+    const rawDirClean = String(
+      safeObj.direccion_despacho ?? safeObj.direccionEntrega ?? safeObj.observaciones ?? ''
+    )
+      .replace(/\s*\|\s*OC\s+(?:ALKOSTO|FAMILIA(?:\s+CENTER)?)\s*:\s*[^|]+/gi, '')
+      .replace(/\b(?:OC|ORDEN\s+DE\s+COMPRA)\s*[:#]?\s*[A-Z0-9-]{4,}\s*\|?\s*/gi, '')
+      .replace(/\bRef\.\s*Cadenas\s*:\s*#[A-Z0-9-]+\s*\|?\s*/gi, '')
+      .replace(/^.*\|\s*Dir:\s*/i, '')
+      .trim();
+
+    const direccionDespacho = rawDirClean || cliente || `Despacho ${cadena}`;
+    const cadenaTag = cadena === 'FAMILIA CENTER' ? 'FAMILIA CENTER' : cadena === 'ALKOSTO' ? 'ALKOSTO' : 'OTRA CADENA';
+
+    const obs =
+      safeObj.observacion_formateada && String(safeObj.observacion_formateada).includes(' | OC ') && String(safeObj.observacion_formateada).includes(' | Dir: ')
+        ? String(safeObj.observacion_formateada).trim()
+        : `${cliente} | OC ${cadenaTag}: ${ocNum || 'S/N'} | Dir: ${direccionDespacho}`;
 
     // 6. Estado obligatorio en Sala de Espera:
     // NUNCA se permite que un payload externo inyecte 'PENDIENTE_CXC' o salte la Sala de Espera.
@@ -701,7 +719,7 @@ export function parseAndValidateChainOrders(rawPayload: unknown): BatchParseResu
         ? rawCorrelativo
         : 'APP-FDV';
 
-    const ruta = String(safeObj.ruta ?? safeObj.vendedora ?? 'SAIRU VALLES / CUENTAS CLAVE 2').trim().toUpperCase();
+    const ruta = String(safeObj.vendedor ?? safeObj.ruta ?? safeObj.vendedora ?? 'SAIRU VALLES / CUENTAS CLAVE 2').trim().toUpperCase();
     const supervisor = String(safeObj.supervisor ?? '').trim().toUpperCase();
     const chofer = String(safeObj.chofer ?? '').trim().toUpperCase();
     const rawCreated = safeObj.createdAt ?? safeObj.created_at;
@@ -716,6 +734,13 @@ export function parseAndValidateChainOrders(rawPayload: unknown): BatchParseResu
 
     const orderData: OrderData = {
       cliente,
+      sucursal_cliente: cliente,
+      cadena: cadenaTag,
+      numero_oc: ocNum || 'S/N',
+      direccion_despacho: direccionDespacho,
+      observacion_formateada: obs,
+      vendedor: ruta,
+      total_renglones: normalizedItems.length,
       id_cliente: idCliente,
       ruta,
       supervisor,

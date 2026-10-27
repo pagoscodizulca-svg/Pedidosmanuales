@@ -14054,5 +14054,10 @@ export const CLIENTES: Cliente[] = [
     "id_cliente": "008278",
     "nombre": "LA PATRONA 2026, C.A",
     "vendedor": "ADEL JARABA"
+  },
+  {
+    "id_cliente": "008306",
+    "nombre": "ALKOSTO DONDE COMPRAR ES GANAR, C.A.",
+    "vendedor": "CUENTAS CLAVE 2"
   }
 ];

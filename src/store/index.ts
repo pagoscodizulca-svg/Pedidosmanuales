@@ -4,10 +4,94 @@ import { DbOrder, OrderData, OrderStatus } from '../types.js';
 import { useAuthStore } from './auth';
 import { supabase } from '../lib/supabase';
 
+const WAITING_ROOM_RAW_STATUSES = new Set([
+  'POR_VALIDAR',
+  'POR VALIDAR',
+  'PENDIENTE',
+  'EN_ESPERA',
+  'EN ESPERA',
+  'ENVIADO',
+  'POR_APROBAR',
+  'RECIBIDO'
+]);
+
 function mapDirectSupabaseRowToDbOrder(row: any): DbOrder {
+  const rawStatus = String(row.status || '').trim().toUpperCase();
+  const normalizedStatus = (
+    WAITING_ROOM_RAW_STATUSES.has(rawStatus) ? 'POR_VALIDAR' : rawStatus
+  ) as OrderStatus;
+  const rawOrd = row.raw_order && typeof row.raw_order === 'object' ? row.raw_order : {};
+  const rawArticulosSource =
+    Array.isArray(row.articulos) && row.articulos.length > 0
+      ? row.articulos
+      : Array.isArray(rawOrd.articulos) && rawOrd.articulos.length > 0
+        ? rawOrd.articulos
+        : Array.isArray(rawOrd.items) && rawOrd.items.length > 0
+          ? rawOrd.items
+          : Array.isArray(rawOrd.renglones) && rawOrd.renglones.length > 0
+            ? rawOrd.renglones
+            : [];
+
+  const articulos = rawArticulosSource.map((it: any) => {
+    const cant = Number(it?.cantidad_solicitada ?? it?.cantidadCajas ?? it?.cantidad ?? 0);
+    const precio = Number(it?.precio_unitario ?? it?.precioUnitarioUSD ?? it?.precio ?? 0);
+    const rawSub = Number(it?.sub_total ?? it?.subtotalUSD ?? it?.subtotal ?? 0);
+    const subTotal =
+      cant > 0 && precio > 0
+        ? Number((cant * precio).toFixed(2))
+        : Number.isFinite(rawSub) && rawSub >= 0
+          ? Number(rawSub.toFixed(2))
+          : 0;
+    return {
+      codigo: String(it?.codigo ?? it?.sku ?? '').trim(),
+      descripcion: String(it?.descripcion ?? it?.producto ?? '').trim(),
+      unidad_medida: String(it?.unidad_medida ?? it?.presentacion ?? 'BULTO').trim(),
+      cantidad_solicitada: Number.isFinite(cant) ? cant : 0,
+      cantidad_despachada: Number(it?.cantidad_despachada ?? 0) || 0,
+      precio_unitario: Number.isFinite(precio) ? precio : 0,
+      sub_total: subTotal
+    };
+  });
+
+  const calculatedTotal = Number(
+    articulos.reduce((acc: number, it: any) => acc + (Number(it.sub_total) || 0), 0).toFixed(2)
+  );
+  const declaredTotal = Number(row.total_pedido ?? row.monto_pedido ?? rawOrd.monto_pedido ?? 0);
+  const finalTotal =
+    calculatedTotal > 0 &&
+    (declaredTotal <= 0 ||
+      Number.isNaN(declaredTotal) ||
+      ((normalizedStatus === 'POR_VALIDAR' || normalizedStatus === 'ERROR_FORMATO') &&
+        Math.abs(declaredTotal - calculatedTotal) > 0.5))
+      ? calculatedTotal
+      : Number.isFinite(declaredTotal)
+        ? Number(declaredTotal.toFixed(2))
+        : 0;
+
+  const obsText = String(row.observaciones || rawOrd.observacion_formateada || rawOrd.observaciones || '').trim();
+  const ocMatch =
+    obsText.match(/OC\s+(?:ALKOSTO|FAMILIA(?:\s+CENTER)?|OTRA\s+CADENA)\s*:\s*([A-Z0-9-]+)/i) ||
+    obsText.match(/\b(?:OC|ORDEN\s+DE\s+COMPRA)\s*[:#]?\s*([A-Z0-9-]{4,})/i);
+  const extractedOc =
+    rawOrd.numero_oc ||
+    rawOrd.ordenCompraAlkosto ||
+    rawOrd.orden_compra_alkosto ||
+    (ocMatch ? ocMatch[1].trim() : undefined);
+
+  const dirMatch = obsText.match(/\|\s*Dir:\s*(.+)$/i);
+  const extractedDir =
+    rawOrd.direccion_despacho ||
+    rawOrd.direccionEntrega ||
+    (dirMatch
+      ? dirMatch[1].trim()
+      : obsText
+          .replace(/\s*\|\s*OC\s+(?:ALKOSTO|FAMILIA(?:\s+CENTER)?|OTRA\s+CADENA)\s*:\s*[^|]+/gi, '')
+          .replace(/\b(?:OC|ORDEN\s+DE\s+COMPRA)\s*[:#]?\s*[A-Z0-9-]{4,}\s*\|?\s*/gi, '')
+          .trim() || undefined);
+
   return {
     id: row.id,
-    status: row.status as OrderStatus,
+    status: normalizedStatus,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     statusHistory: row.status_history || [],
@@ -16,16 +100,25 @@ function mapDirectSupabaseRowToDbOrder(row: any): DbOrder {
     factNote: row.fact_note || undefined,
     isArchived: Boolean(row.is_archived),
     order: {
-      cliente: row.cliente || '',
-      id_cliente: row.id_cliente || '',
-      ruta: row.ruta || '',
-      supervisor: row.supervisor || '',
-      chofer: row.chofer || '',
-      observaciones: row.observaciones || '',
-      fecha: row.fecha || '',
-      articulos: row.articulos || [],
-      numero_pedido: row.numero_pedido || '',
-      total_pedido: Number(row.total_pedido ?? row.monto_pedido ?? 0),
+      cliente: row.cliente || rawOrd.sucursal_cliente || rawOrd.cliente || '',
+      sucursal_cliente: rawOrd.sucursal_cliente || row.cliente || '',
+      cadena: rawOrd.cadena || rawOrd.origen || undefined,
+      numero_oc: extractedOc,
+      direccion_despacho: extractedDir,
+      observacion_formateada: obsText,
+      vendedor: row.ruta || rawOrd.vendedor || '',
+      total_renglones: articulos.length,
+      id_cliente: row.id_cliente || rawOrd.id_cliente || '',
+      ruta: row.ruta || rawOrd.vendedor || '',
+      supervisor: row.supervisor || rawOrd.supervisor || '',
+      chofer: row.chofer || rawOrd.chofer || '',
+      observaciones: obsText,
+      fecha: row.fecha || rawOrd.fecha || '',
+      articulos,
+      numero_pedido: row.numero_pedido || rawOrd.numero_pedido || '',
+      total_pedido: finalTotal,
+      monto_pedido: finalTotal,
+      origen: rawOrd.cadena || rawOrd.origen || undefined,
     },
   };
 }
@@ -79,7 +172,12 @@ interface AppState {
   updateSupervisor: (id: string, supervisor: string) => Promise<void>;
   parseOrderWithAI: (text: string) => Promise<Partial<OrderData>>;
   syncAlkostoOrders: () => Promise<number>;
+  subscribeToWaitingRoomRealtime: () => () => void;
 }
+
+let activeRealtimeChannel: any = null;
+let activeRealtimeSubscribers = 0;
+let realtimeBurstTimeout: ReturnType<typeof setTimeout> | null = null;
 
 function isGhostTestOrder(o: DbOrder): boolean {
   if (!o) return false;
@@ -100,18 +198,71 @@ function isGhostTestOrder(o: DbOrder): boolean {
 
 function normalizeExternalChainOrder(item: DbOrder): DbOrder {
   const id = String(item.id || '').trim().toLowerCase();
-  const num = String(item.order?.numero_pedido || '').trim();
+  const num = String(item.order?.numero_pedido || '').trim().toUpperCase();
   const history = Array.isArray(item.statusHistory) ? item.statusHistory : [];
-  if (id.startsWith('alk-') && item.status === 'PENDIENTE_CXC') {
-    const hasShortCorrelativo = num.length <= 4 || num === 'APP-FDV' || num === 'PENDIENTE';
+  const rawSt = String(item.status || '').trim().toUpperCase();
+  let nextStatus: OrderStatus = (
+    WAITING_ROOM_RAW_STATUSES.has(rawSt) ? 'POR_VALIDAR' : item.status
+  ) as OrderStatus;
+
+  if (nextStatus === 'PENDIENTE_CXC') {
+    const hasShortCorrelativo =
+      id.startsWith('alk-') ||
+      num.length <= 4 ||
+      num === 'APP-FDV' ||
+      num === 'PENDIENTE' ||
+      num === 'AUTO';
     const wasValidatedInManuales = history.some(
-      (h: any) => h && h.status === 'PENDIENTE_CXC' && h.reason === 'Validado y actualizado'
+      (h: any) =>
+        h &&
+        h.status === 'PENDIENTE_CXC' &&
+        (String(h.reason || '').includes('Validado') || String(h.reason || '').includes('Aprobado'))
     );
-    if (hasShortCorrelativo && !wasValidatedInManuales) {
-      return { ...item, status: 'POR_VALIDAR', rejectReason: undefined };
+    if (hasShortCorrelativo && !wasValidatedInManuales && (id.startsWith('alk-') || num === 'APP-FDV' || num === 'PENDIENTE')) {
+      nextStatus = 'POR_VALIDAR';
     }
   }
-  return item;
+
+  // Recalcular total_pedido desde renglones si existe discrepancia o valor en 0 / NaN
+  const arts = Array.isArray(item.order?.articulos) ? item.order.articulos : [];
+  let sumRenglones = 0;
+  const normalizedArts = arts.map((a: any) => {
+    const cant = Number(a?.cantidad_solicitada) || 0;
+    const precio = Number(a?.precio_unitario) || 0;
+    const rawSub = Number(a?.sub_total) || 0;
+    const subTotal = cant > 0 && precio > 0 ? Number((cant * precio).toFixed(2)) : Number(rawSub.toFixed(2));
+    sumRenglones += subTotal;
+    return {
+      ...a,
+      cantidad_solicitada: cant,
+      precio_unitario: precio,
+      sub_total: subTotal
+    };
+  });
+  sumRenglones = Number(sumRenglones.toFixed(2));
+  const declaredTotal = Number(item.order?.total_pedido ?? item.order?.monto_pedido ?? 0);
+  const verifiedTotal =
+    sumRenglones > 0 &&
+    (declaredTotal <= 0 ||
+      Number.isNaN(declaredTotal) ||
+      ((nextStatus === 'POR_VALIDAR' || nextStatus === 'ERROR_FORMATO') && Math.abs(declaredTotal - sumRenglones) > 0.5))
+      ? sumRenglones
+      : Number.isFinite(declaredTotal)
+        ? Number(declaredTotal.toFixed(2))
+        : 0;
+
+  return {
+    ...item,
+    status: nextStatus,
+    rejectReason: nextStatus === 'POR_VALIDAR' ? undefined : item.rejectReason,
+    order: {
+      ...item.order,
+      articulos: normalizedArts,
+      total_renglones: normalizedArts.length,
+      total_pedido: verifiedTotal,
+      monto_pedido: verifiedTotal
+    }
+  };
 }
 
 function dedupeAndFilterOrders(list: DbOrder[]): DbOrder[] {
@@ -154,7 +305,17 @@ export const useAppStore = create<AppState>((set, get) => ({
         supabase
           .from('orders')
           .select('*')
-          .in('status', ['POR_VALIDAR', 'ERROR_FORMATO'])
+          .in('status', [
+            'POR_VALIDAR',
+            'POR VALIDAR',
+            'ERROR_FORMATO',
+            'PENDIENTE',
+            'EN_ESPERA',
+            'EN ESPERA',
+            'ENVIADO',
+            'POR_APROBAR',
+            'RECIBIDO'
+          ])
           .order('created_at', { ascending: false })
       ]);
 
@@ -209,6 +370,59 @@ export const useAppStore = create<AppState>((set, get) => ({
       return 0;
     }
   },
+
+  subscribeToWaitingRoomRealtime: () => {
+    activeRealtimeSubscribers++;
+    if (!activeRealtimeChannel) {
+      activeRealtimeChannel = supabase
+        .channel('sala-espera-orders-realtime')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'orders' },
+          (payload: any) => {
+            try {
+              const eventType = payload?.eventType;
+              if (eventType === 'INSERT' || eventType === 'UPDATE') {
+                const newRow = payload.new;
+                if (newRow && newRow.id) {
+                  const mapped = normalizeExternalChainOrder(mapDirectSupabaseRowToDbOrder(newRow));
+                  if (!isGhostTestOrder(mapped)) {
+                    const current = get().orders;
+                    const exists = current.some(o => o.id === mapped.id);
+                    const nextOrders = exists
+                      ? current.map(o => (o.id === mapped.id ? mapped : o))
+                      : [mapped, ...current];
+                    set({ orders: dedupeAndFilterOrders(nextOrders) });
+                  }
+                }
+              } else if (eventType === 'DELETE') {
+                const deletedId = payload?.old?.id;
+                if (deletedId) {
+                  set({ orders: get().orders.filter(o => o.id !== deletedId) });
+                }
+              }
+
+              // Reconciliación diferida con buffer para ráfagas de 7+ pedidos simultáneos
+              if (realtimeBurstTimeout) clearTimeout(realtimeBurstTimeout);
+              realtimeBurstTimeout = setTimeout(() => {
+                get().fetchOrders().catch(() => {});
+              }, 450);
+            } catch (rtErr) {
+              console.warn('Error en listener Real-Time de Sala de Espera:', rtErr);
+            }
+          }
+        )
+        .subscribe();
+    }
+
+    return () => {
+      activeRealtimeSubscribers = Math.max(0, activeRealtimeSubscribers - 1);
+      if (activeRealtimeSubscribers === 0 && activeRealtimeChannel) {
+        supabase.removeChannel(activeRealtimeChannel).catch(() => {});
+        activeRealtimeChannel = null;
+      }
+    };
+  },
   
   createOrder: async (orderData) => {
     set({ error: null });
@@ -245,33 +459,46 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
   
-  
   updateFullOrder: async (id, orderData, newStatus) => {
+    set({ error: null });
     try {
-       const { username, department } = getCurrentUserActor();
+      const { username, department } = getCurrentUserActor();
 
-       const historyItem = newStatus ? {
-          status: newStatus,
-          department,
-          changedBy: username,
-          timestamp: new Date().toISOString(),
-          reason: 'Validado y actualizado'
-       } : undefined;
+      const historyItem = newStatus
+        ? {
+            status: newStatus,
+            department,
+            changedBy: username,
+            timestamp: new Date().toISOString(),
+            reason: 'Validado y actualizado'
+          }
+        : undefined;
 
-       const response = await apiFetch(`/api/orders/${id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ orderData, status: newStatus, historyItem })
-       });
-       if (!response.ok) throw new Error('Error al actualizar pedido');
-       const updated = await response.json().catch(() => null);
-       if (updated && updated.id) {
-         set({ orders: get().orders.map(o => o.id === id ? updated : o) });
-       } else {
-         await get().fetchOrders();
-       }
-    } catch(err) {
-       console.error(err);
+      const response = await apiFetch(`/api/orders/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderData, status: newStatus, historyItem })
+      });
+
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => ({}));
+        throw new Error(errBody.error || 'Error al actualizar o aprobar el pedido');
+      }
+
+      const updated = await response.json().catch(() => null);
+      if (updated && updated.id) {
+        const normalizedUpdated = normalizeExternalChainOrder(updated);
+        set({
+          orders: get().orders.map(o => (o.id === id ? normalizedUpdated : o)),
+          error: null
+        });
+      } else {
+        await get().fetchOrders();
+      }
+    } catch (err: any) {
+      console.error('Error en updateFullOrder:', err);
+      set({ error: err?.message || 'Error al actualizar el pedido' });
+      throw err;
     }
   },
 

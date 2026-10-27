@@ -11,6 +11,13 @@ export interface ArticuloItem {
 export interface OrderData {
   id_cliente?: string;
   cliente: string;
+  sucursal_cliente?: string;
+  cadena?: 'ALKOSTO' | 'FAMILIA CENTER' | string;
+  numero_oc?: string;
+  direccion_despacho?: string;
+  observacion_formateada?: string;
+  vendedor?: string;
+  total_renglones?: number;
   numero_pedido?: string;
   ruta?: string;
   supervisor?: string;
