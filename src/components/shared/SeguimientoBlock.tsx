@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { SeguimientoTable } from './SeguimientoTable';
 import { Printer } from 'lucide-react';
 import { DbOrder } from '../../types';
 import { generateConsolidatedReport, printMultipleOrders } from '../../lib/pdfUtils';
+import { VENDEDORES } from '../../data/vendedores';
+import { buildGroupedVendedorOptions, matchVendedor } from '../../utils/vendedorFilter';
 
 interface SeguimientoBlockProps {
   orders: DbOrder[];
@@ -16,6 +18,11 @@ export const SeguimientoBlock: React.FC<SeguimientoBlockProps> = ({ orders, hide
   const [dateTo, setDateTo] = useState('');
   const [sellerTerm, setSellerTerm] = useState('');
   const [activeFilterTab, setActiveFilterTab] = useState<'TODOS' | 'PROCESO' | 'LISTOS' | 'RECHAZADOS'>('TODOS');
+
+  const vendedorOptions = useMemo(
+    () => buildGroupedVendedorOptions(orders, Object.keys(VENDEDORES)),
+    [orders],
+  );
 
   const isWaitingRoomOrder = (o: DbOrder) => {
     const st = String(o.status || '').trim().toUpperCase();
@@ -55,10 +62,9 @@ export const SeguimientoBlock: React.FC<SeguimientoBlockProps> = ({ orders, hide
       if (!matchNum) return false;
     }
 
-    // Seller
+    // Seller (coincidencia inteligente bidireccional sobre columna `ruta` / `vendedor`)
     if (sellerTerm) {
-      const ruta = String(ord.ruta || '').toLowerCase();
-      if (!ruta.includes(sellerTerm.toLowerCase())) return false;
+      if (!matchVendedor(ord.ruta || ord.vendedor, sellerTerm)) return false;
     }
 
     // Dates
@@ -178,10 +184,17 @@ export const SeguimientoBlock: React.FC<SeguimientoBlockProps> = ({ orders, hide
 
            {/* Bottom Row: Vendedor and Print */}
            <div className="flex flex-wrap items-center gap-3">
-             <input type="text" placeholder="Buscar Vendedor..." 
-               className="border border-slate-200 rounded-lg px-3 py-2 text-[13px] font-medium shadow-sm focus:outline-none focus:border-codizulca-cyan focus:ring-1 focus:ring-cyan-200 w-48 placeholder-slate-400"
-               value={sellerTerm} onChange={e => setSellerTerm(e.target.value)}
-             />
+             <select
+               aria-label="Filtrar por Vendedor"
+               className="border border-slate-200 rounded-lg px-3 py-2 text-[13px] font-medium shadow-sm focus:outline-none focus:border-codizulca-cyan focus:ring-1 focus:ring-cyan-200 min-w-[230px] bg-white text-slate-700"
+               value={sellerTerm}
+               onChange={e => setSellerTerm(e.target.value)}
+             >
+               <option value="">Todos los vendedores</option>
+               {vendedorOptions.map(opt => (
+                 <option key={opt.value} value={opt.value}>{opt.label}</option>
+               ))}
+             </select>
 
              <button 
                onClick={() => generateConsolidatedReport(filteredOrders, dateFrom && dateTo ? `Del ${dateFrom} al ${dateTo}` : 'Todo')}

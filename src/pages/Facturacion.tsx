@@ -8,6 +8,11 @@ import { InlineNoteForm } from '../components/shared/InlineNoteForm';
 import { InlineRejectForm } from '../components/shared/InlineRejectForm';
 import { printMultipleOrders } from '../lib/pdfUtils';
 import { VENDEDORES } from '../data/vendedores';
+import {
+  buildGroupedVendedorOptions,
+  getZonasForVendedor,
+  matchVendedor,
+} from '../utils/vendedorFilter';
 
 type Tab = 'POR_FACTURAR' | 'FACTURADOS' | 'RECHAZADOS';
 
@@ -76,6 +81,18 @@ export const Facturacion: React.FC = () => {
     return { kpiPorFacturar: porFacturar, kpiFacturados: facturados, kpiRechazados: rechazados };
   }, [orders]);
 
+  // Opciones dinámicas agrupadas de vendedores (catálogo base + columna `ruta` de Supabase)
+  const vendedorOptions = useMemo(
+    () => buildGroupedVendedorOptions(orders, Object.keys(VENDEDORES)),
+    [orders],
+  );
+
+  // Zonas puntuales asociadas al vendedor seleccionado mediante coincidencia inteligente
+  const zonasDisponibles = useMemo(
+    () => getZonasForVendedor(filterVendedor, VENDEDORES),
+    [filterVendedor],
+  );
+
   const ejecutarBusqueda = () => {
     setDisplayCount(PAGE_SIZE);
     setAppliedFilters({ vendedor: filterVendedor, zona: filterZona, cliente: filterCliente, correlativo: filterCorrelativo, dateFrom, dateTo });
@@ -102,8 +119,10 @@ export const Facturacion: React.FC = () => {
 
       const ord = o.order || ({} as any);
 
-      const ruta = String(ord.ruta || '').toLowerCase();
-      if (appliedFilters.vendedor && !ruta.includes(appliedFilters.vendedor.toLowerCase())) return false;
+      // Coincidencia inteligente bidireccional sobre la columna `ruta` (con respaldo `vendedor`)
+      if (appliedFilters.vendedor && !matchVendedor(ord.ruta || ord.vendedor, appliedFilters.vendedor)) {
+        return false;
+      }
       
       const obs = String(ord.observaciones || '').toLowerCase();
       if (appliedFilters.zona && !obs.includes(appliedFilters.zona.toLowerCase())) return false;
@@ -250,13 +269,16 @@ export const Facturacion: React.FC = () => {
                 className={`${inputCls} bg-white`}
                 value={filterVendedor} 
                 onChange={e => {
-                  setFilterVendedor(e.target.value);
-                  setFilterZona(''); 
+                  const nextVendedor = e.target.value;
+                  setFilterVendedor(nextVendedor);
+                  setFilterZona('');
+                  setDisplayCount(PAGE_SIZE);
+                  setAppliedFilters(prev => ({ ...prev, vendedor: nextVendedor, zona: '' }));
                 }}
               >
                 <option value="">Todos los vendedores</option>
-                {Object.keys(VENDEDORES).map(v => (
-                  <option key={v} value={v}>{v}</option>
+                {vendedorOptions.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
             </div>
@@ -265,11 +287,16 @@ export const Facturacion: React.FC = () => {
               <select 
                 className={`${inputCls} bg-white disabled:bg-slate-50 disabled:text-slate-400`}
                 value={filterZona} 
-                onChange={e => setFilterZona(e.target.value)}
-                disabled={!filterVendedor || VENDEDORES[filterVendedor]?.length === 0}
+                onChange={e => {
+                  const nextZona = e.target.value;
+                  setFilterZona(nextZona);
+                  setDisplayCount(PAGE_SIZE);
+                  setAppliedFilters(prev => ({ ...prev, zona: nextZona }));
+                }}
+                disabled={!filterVendedor || zonasDisponibles.length === 0}
               >
-                <option value="">{filterVendedor && VENDEDORES[filterVendedor]?.length > 0 ? 'Selecciona una zona...' : 'Sin zonas configuradas'}</option>
-                {filterVendedor && VENDEDORES[filterVendedor]?.map(z => (
+                <option value="">{filterVendedor && zonasDisponibles.length > 0 ? 'Selecciona una zona...' : 'Sin zonas configuradas'}</option>
+                {filterVendedor && zonasDisponibles.map(z => (
                   <option key={z} value={z}>{z}</option>
                 ))}
               </select>

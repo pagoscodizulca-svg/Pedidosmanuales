@@ -8,6 +8,11 @@ import { InlineNoteForm } from '../components/shared/InlineNoteForm';
 import { InlineRejectForm } from '../components/shared/InlineRejectForm';
 import { printMultipleOrders } from '../lib/pdfUtils';
 import { VENDEDORES } from '../data/vendedores';
+import {
+  buildGroupedVendedorOptions,
+  getZonasForVendedor,
+  matchVendedor,
+} from '../utils/vendedorFilter';
 
 export const CXC: React.FC = () => {
   const { orders, fetchOrders, updateOrderStatus, updateBatchOrderStatus, updateSupervisor, loading } = useAppStore();
@@ -40,6 +45,18 @@ export const CXC: React.FC = () => {
   const kpiProcesados = orders.filter(o => o.status === 'COMPLETADO' && !o.isArchived).length;
   const kpiRechazados = orders.filter(o => o.status === 'RECHAZADO' && !o.isArchived).length;
 
+  // Opciones dinámicas agrupadas de vendedores (catálogo base + columna `ruta` de Supabase)
+  const vendedorOptions = useMemo(
+    () => buildGroupedVendedorOptions(orders, Object.keys(VENDEDORES)),
+    [orders],
+  );
+
+  // Zonas puntuales asociadas al vendedor seleccionado mediante coincidencia inteligente
+  const zonasDisponibles = useMemo(
+    () => getZonasForVendedor(filterVendedor, VENDEDORES),
+    [filterVendedor],
+  );
+
   // Filter Logic
   const ejecutarBusqueda = () =>
     setAppliedFilters({ vendedor: filterVendedor, zona: filterZona, cliente: filterCliente, correlativo: filterCorrelativo, dateFrom, dateTo });
@@ -65,8 +82,10 @@ export const CXC: React.FC = () => {
 
       const ord = o.order || ({} as any);
 
-      const ruta = String(ord.ruta || '').toLowerCase();
-      if (appliedFilters.vendedor && !ruta.includes(appliedFilters.vendedor.toLowerCase())) return false;
+      // Coincidencia inteligente bidireccional sobre la columna `ruta` (con respaldo `vendedor`)
+      if (appliedFilters.vendedor && !matchVendedor(ord.ruta || ord.vendedor, appliedFilters.vendedor)) {
+        return false;
+      }
       
       const obs = String(ord.observaciones || '').toLowerCase();
       if (appliedFilters.zona && !obs.includes(appliedFilters.zona.toLowerCase())) return false; 
@@ -186,13 +205,15 @@ export const CXC: React.FC = () => {
                 className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-codizulca-cyan focus:ring-1 focus:ring-cyan-200 bg-white"
                 value={filterVendedor} 
                 onChange={e => {
-                  setFilterVendedor(e.target.value);
-                  setFilterZona(''); 
+                  const nextVendedor = e.target.value;
+                  setFilterVendedor(nextVendedor);
+                  setFilterZona('');
+                  setAppliedFilters(prev => ({ ...prev, vendedor: nextVendedor, zona: '' }));
                 }}
               >
                 <option value="">Todos los vendedores</option>
-                {Object.keys(VENDEDORES).map(v => (
-                  <option key={v} value={v}>{v}</option>
+                {vendedorOptions.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
             </div>
@@ -201,11 +222,15 @@ export const CXC: React.FC = () => {
               <select 
                 className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-codizulca-cyan focus:ring-1 focus:ring-cyan-200 bg-white disabled:bg-slate-50 disabled:text-slate-400"
                 value={filterZona} 
-                onChange={e => setFilterZona(e.target.value)}
-                disabled={!filterVendedor || VENDEDORES[filterVendedor]?.length === 0}
+                onChange={e => {
+                  const nextZona = e.target.value;
+                  setFilterZona(nextZona);
+                  setAppliedFilters(prev => ({ ...prev, zona: nextZona }));
+                }}
+                disabled={!filterVendedor || zonasDisponibles.length === 0}
               >
-                <option value="">{filterVendedor && VENDEDORES[filterVendedor]?.length > 0 ? 'Selecciona una zona...' : 'Sin zonas configuradas'}</option>
-                {filterVendedor && VENDEDORES[filterVendedor]?.map(z => (
+                <option value="">{filterVendedor && zonasDisponibles.length > 0 ? 'Selecciona una zona...' : 'Sin zonas configuradas'}</option>
+                {filterVendedor && zonasDisponibles.map(z => (
                   <option key={z} value={z}>{z}</option>
                 ))}
               </select>
