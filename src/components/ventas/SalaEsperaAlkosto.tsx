@@ -82,6 +82,73 @@ export function detectOrderChain(o: DbOrder): 'ALKOSTO' | 'FAMILIA' | 'OTRA' {
   return 'OTRA';
 }
 
+export function isAlkostoSairuOrder(o: DbOrder): boolean {
+  if (!o || detectOrderChain(o) !== 'ALKOSTO') return false;
+  const ord = o.order || ({} as any);
+  const firstHistoryActor = Array.isArray(o.statusHistory) && o.statusHistory.length > 0 ? o.statusHistory[0]?.changedBy : '';
+  const rawSellerSignal = `${ord.vendedor || ''} ${ord.ruta || ''} ${ord.supervisor || ''} ${firstHistoryActor || ''}`
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .trim();
+
+  if (!rawSellerSignal) return true; // Pedidos externos de pestaña ALKOSTO sin vendedor explícito pertenecen a Sairu Valles
+  return (
+    rawSellerSignal.includes('SAIRU') ||
+    rawSellerSignal.includes('VALLES') ||
+    rawSellerSignal.includes('CUENTAS CLAVE')
+  );
+}
+
+export function isRecentlyArrivedOrder(o: DbOrder, maxMinutes = 60): boolean {
+  if (!o) return false;
+  const rawTs = o.updatedAt || o.createdAt;
+  if (!rawTs) return false;
+  const ts = new Date(rawTs).getTime();
+  if (!Number.isFinite(ts) || ts <= 0) return false;
+  return Date.now() - ts <= maxMinutes * 60 * 1000;
+}
+
+export const AlkostoSairuCorporateBadge: React.FC<{ isRecent?: boolean }> = ({ isRecent = false }) => (
+  <span
+    style={{
+      backgroundColor: '#DC2626',
+      color: '#FFFFFF',
+      borderColor: '#09090B'
+    }}
+    className="inline-flex items-center overflow-hidden rounded-full border-[1.5px] text-[10px] font-black uppercase tracking-wider shadow-sm"
+    title="Pedido recibido desde la pestaña ALKOSTO - Perfil Sairu Valles (App de Vendedores)"
+  >
+    <span
+      style={{ backgroundColor: '#09090B', color: '#FFFFFF' }}
+      className="inline-flex items-center gap-1 px-2 py-0.5 font-black"
+    >
+      {isRecent && (
+        <span
+          style={{ backgroundColor: '#DC2626' }}
+          className="inline-block h-1.5 w-1.5 rounded-full animate-pulse"
+        />
+      )}
+      <Store size={10} style={{ color: '#FFFFFF' }} />
+      <span>ALKOSTO</span>
+    </span>
+    <span
+      style={{ backgroundColor: '#DC2626', color: '#FFFFFF' }}
+      className="inline-flex items-center gap-1 px-2 py-0.5 font-extrabold"
+    >
+      <span>SAIRU VALLES</span>
+      {isRecent && (
+        <span
+          style={{ backgroundColor: '#09090B', color: '#FFFFFF' }}
+          className="ml-0.5 rounded px-1 py-[1px] text-[8px] font-black leading-none tracking-widest"
+        >
+          NUEVO
+        </span>
+      )}
+    </span>
+  </span>
+);
+
 export function extractOrderReferenceMeta(o: DbOrder): {
   formattedOrderId: string;
   clientCode: string;
@@ -118,7 +185,18 @@ export function extractOrderReferenceMeta(o: DbOrder): {
   const rawClientCode = String(ord.id_cliente || '').trim();
   const clientCode = /^\d+$/.test(rawClientCode) ? rawClientCode.padStart(6, '0') : rawClientCode || 'S/C';
 
-  const sedeName = String(ord.sucursal_cliente || ord.cliente || 'SUCURSAL POR DEFINIR').trim().toUpperCase();
+  const rawSucursal = String(ord.sucursal || o.sucursal || '').trim();
+  const cleanSucursalFallback =
+    rawSucursal && rawSucursal.toUpperCase() !== 'MARACAIBO' ? rawSucursal : '';
+  const sedeName = String(
+    ord.sucursal_cliente ||
+      (ord.cliente && String(ord.cliente).trim().toUpperCase() !== 'ALKOSTO' ? ord.cliente : '') ||
+      cleanSucursalFallback ||
+      ord.cliente ||
+      'SUCURSAL POR DEFINIR'
+  )
+    .trim()
+    .toUpperCase();
   const rawObs = String(ord.observacion_formateada || ord.observaciones || '').trim();
 
   const ocMatch =
@@ -191,6 +269,7 @@ export function extractOrderReferenceMeta(o: DbOrder): {
 export const SalaEsperaAlkosto: React.FC = () => {
   const {
     orders,
+    fetchOrders,
     updateFullOrder,
     deleteOrder,
     deleteBatchOrders,
@@ -206,9 +285,10 @@ export const SalaEsperaAlkosto: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [feedbackBanner, setFeedbackBanner] = useState<{ type: 'success' | 'error' | 'warning'; message: string } | null>(null);
 
-  // Sincronización en Tiempo Real (Supabase postgres_changes) + Polling Seguro con la App FDV
+  // Sincronización en Tiempo Real (Supabase postgres_changes INSERT/UPDATE) + Re-consulta inmediata al recuperar foco
   useEffect(() => {
     const unsubscribeRealtime = subscribeToWaitingRoomRealtime();
+    fetchOrders().catch(() => {});
     syncAlkostoOrders().catch(() => {});
 
     const interval = setInterval(() => {
@@ -217,6 +297,7 @@ export const SalaEsperaAlkosto: React.FC = () => {
 
     const handleVisibilityOrFocus = () => {
       if (document.visibilityState === 'visible') {
+        fetchOrders().catch(() => {});
         syncAlkostoOrders().catch(() => {});
       }
     };
@@ -230,7 +311,7 @@ export const SalaEsperaAlkosto: React.FC = () => {
       window.removeEventListener('focus', handleVisibilityOrFocus);
       document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
     };
-  }, [syncAlkostoOrders, subscribeToWaitingRoomRealtime]);
+  }, [fetchOrders, syncAlkostoOrders, subscribeToWaitingRoomRealtime]);
 
   const handleManualSync = async () => {
     setIsSyncing(true);
@@ -254,12 +335,23 @@ export const SalaEsperaAlkosto: React.FC = () => {
     }
   };
 
-  // Filtrado tolerante a fallos: ningún pedido entrante desde App FDV queda oculto
+  // Filtrado sin restricciones + Ordenamiento descendente por llegada para que los pedidos nuevos aparezcan al inicio
   const pendingOrders = useMemo(() => {
-    return orders.filter(o => {
-      const st = String(o.status || '').trim().toUpperCase();
-      return WAITING_ROOM_STATUSES.has(st);
-    });
+    const getArrivalTs = (ord: DbOrder): number => {
+      const rawTs = ord.updatedAt || ord.createdAt || '';
+      const parsed = rawTs ? new Date(rawTs).getTime() : 0;
+      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+      const created = ord.createdAt ? new Date(ord.createdAt).getTime() : 0;
+      return Number.isFinite(created) ? created : 0;
+    };
+
+    return orders
+      .filter(o => {
+        if (o.isArchived) return false;
+        const st = String(o.status || '').trim().toUpperCase();
+        return WAITING_ROOM_STATUSES.has(st);
+      })
+      .sort((a, b) => getArrivalTs(b) - getArrivalTs(a));
   }, [orders]);
 
   // Clasificación insensible a mayúsculas/minúsculas y espacios (con pestaña Sin Clasificar / Revisión)
@@ -317,6 +409,9 @@ export const SalaEsperaAlkosto: React.FC = () => {
   const getChainBadge = (o: DbOrder) => {
     const chain = detectOrderChain(o);
     if (chain === 'ALKOSTO') {
+      if (isAlkostoSairuOrder(o)) {
+        return <AlkostoSairuCorporateBadge isRecent={isRecentlyArrivedOrder(o)} />;
+      }
       return (
         <span className="inline-flex items-center gap-1 bg-red-100 text-red-800 border border-red-200 text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">
           <Store size={11} className="text-red-600" /> ALKOSTO
@@ -671,13 +766,23 @@ export const SalaEsperaAlkosto: React.FC = () => {
             const meta = extractOrderReferenceMeta(o);
             const isApproving = approvingIds.has(o.id);
             const isFormatError = o.status === 'ERROR_FORMATO' || String(o.cxcNote || '').startsWith('ERROR_FORMATO:');
+            const isAlkostoSairu = isAlkostoSairuOrder(o);
             const parsingNotice = String(o.cxcNote || '').replace(/^(ERROR_FORMATO|AVISO_PARSING):\s*/i, '').trim();
 
             return (
               <div 
                 key={o.id} 
+                style={
+                  isAlkostoSairu && !isFormatError
+                    ? { borderTopColor: '#DC2626', borderTopWidth: '3px' }
+                    : undefined
+                }
                 className={`bg-white rounded-2xl p-5 border shadow-sm hover:shadow-md transition-all flex flex-col justify-between ${
-                  isFormatError ? 'border-red-300 ring-1 ring-red-100' : 'border-slate-200 hover:border-slate-300'
+                  isFormatError
+                    ? 'border-red-300 ring-1 ring-red-100'
+                    : isAlkostoSairu
+                      ? 'border-slate-300 hover:border-[#09090B]'
+                      : 'border-slate-200 hover:border-slate-300'
                 }`}
               >
                 <div>
@@ -806,6 +911,8 @@ export const SalaEsperaAlkosto: React.FC = () => {
                           ...o,
                           order: {
                             ...o.order,
+                            cliente: meta.sedeName !== 'SUCURSAL POR DEFINIR' ? meta.sedeName : o.order.cliente,
+                            sucursal_cliente: meta.sedeName !== 'SUCURSAL POR DEFINIR' ? meta.sedeName : o.order.sucursal_cliente,
                             numero_oc: meta.numeroOc,
                             direccion_despacho: meta.direccionDespacho,
                             observaciones: meta.standardizedObs,

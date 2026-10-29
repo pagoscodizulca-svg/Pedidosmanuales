@@ -15,10 +15,47 @@ const WAITING_ROOM_RAW_STATUSES = new Set([
   'RECIBIDO'
 ]);
 
+const WAITING_ROOM_QUERY_STATUSES = [
+  'POR_VALIDAR',
+  'POR VALIDAR',
+  'ERROR_FORMATO',
+  'PENDIENTE',
+  'EN_ESPERA',
+  'EN ESPERA',
+  'ENVIADO',
+  'POR_APROBAR',
+  'RECIBIDO',
+  'por_validar',
+  'por validar',
+  'error_formato',
+  'pendiente',
+  'en_espera',
+  'en espera',
+  'enviado',
+  'por_aprobar',
+  'recibido'
+];
+
+function normalizeIncomingUnit(rawUnit: unknown, rawDesc?: string): string {
+  const u = String(rawUnit || '').trim().toUpperCase().replace(/\./g, '');
+  if (['KG', 'KGS', 'KILO', 'KILOS', 'KILOGRAMO', 'KILOGRAMOS'].includes(u)) return 'KG';
+  if (['CJ', 'CJA', 'CAJ', 'CJS', 'CAJA', 'CAJAS', 'BLT', 'BTO', 'BTOS', 'BULTO', 'BULTOS', 'EMP', 'PAQ', 'PAQUETE', 'SACO'].includes(u)) return 'BULTO';
+  if (['PZA', 'PZAS', 'PZ', 'PIEZA', 'PIEZAS'].includes(u)) return 'PIEZA';
+  if (['UND', 'UNID', 'UNI', 'UNIDAD', 'UNIDADES', 'UN'].includes(u)) return 'UNIDAD';
+
+  const descUpper = String(rawDesc || '').toUpperCase();
+  if (/\bX\s*KG\b|\bPOR\s*KG\b|\bXKG\b/.test(descUpper)) return 'KG';
+  return 'BULTO';
+}
+
 function mapDirectSupabaseRowToDbOrder(row: any): DbOrder {
   const rawStatus = String(row.status || '').trim().toUpperCase();
   const normalizedStatus = (
-    WAITING_ROOM_RAW_STATUSES.has(rawStatus) ? 'POR_VALIDAR' : rawStatus
+    WAITING_ROOM_RAW_STATUSES.has(rawStatus)
+      ? 'POR_VALIDAR'
+      : rawStatus === 'ERROR FORMATO'
+        ? 'ERROR_FORMATO'
+        : rawStatus
   ) as OrderStatus;
   const rawOrd = row.raw_order && typeof row.raw_order === 'object' ? row.raw_order : {};
   const rawArticulosSource =
@@ -28,24 +65,42 @@ function mapDirectSupabaseRowToDbOrder(row: any): DbOrder {
         ? rawOrd.articulos
         : Array.isArray(rawOrd.items) && rawOrd.items.length > 0
           ? rawOrd.items
-          : Array.isArray(rawOrd.renglones) && rawOrd.renglones.length > 0
-            ? rawOrd.renglones
-            : [];
+          : Array.isArray(rawOrd.productos) && rawOrd.productos.length > 0
+            ? rawOrd.productos
+            : Array.isArray(rawOrd.renglones) && rawOrd.renglones.length > 0
+              ? rawOrd.renglones
+              : Array.isArray(rawOrd.detalle) && rawOrd.detalle.length > 0
+                ? rawOrd.detalle
+                : [];
 
   const articulos = rawArticulosSource.map((it: any) => {
-    const cant = Number(it?.cantidad_solicitada ?? it?.cantidadCajas ?? it?.cantidad ?? 0);
-    const precio = Number(it?.precio_unitario ?? it?.precioUnitarioUSD ?? it?.precio ?? 0);
-    const rawSub = Number(it?.sub_total ?? it?.subtotalUSD ?? it?.subtotal ?? 0);
+    const cant = Number(
+      it?.cantidad_solicitada ?? it?.cantidadCajas ?? it?.cantidad ?? it?.cant ?? it?.cajas ?? it?.bultos ?? 0
+    );
+    const precio = Number(
+      it?.precio_unitario ?? it?.precioUnitarioUSD ?? it?.costoUnitario ?? it?.costo_unitario ?? it?.precio ?? 0
+    );
+    const rawSub = Number(it?.sub_total ?? it?.subtotalUSD ?? it?.subtotal ?? it?.total ?? it?.monto ?? 0);
     const subTotal =
       cant > 0 && precio > 0
         ? Number((cant * precio).toFixed(2))
         : Number.isFinite(rawSub) && rawSub >= 0
           ? Number(rawSub.toFixed(2))
           : 0;
+    const rawCode = String(
+      it?.codigo ?? it?.sku ?? it?.skuCodizulca ?? it?.codigo_producto ?? it?.codigo_articulo ?? ''
+    ).trim();
+    const codigo = /^\d{1,5}$/.test(rawCode) ? rawCode.padStart(6, '0') : rawCode;
+    const descripcion = String(
+      it?.descripcion ?? it?.producto ?? it?.nombre ?? it?.nombre_producto ?? it?.articulo ?? ''
+    ).trim();
     return {
-      codigo: String(it?.codigo ?? it?.sku ?? '').trim(),
-      descripcion: String(it?.descripcion ?? it?.producto ?? '').trim(),
-      unidad_medida: String(it?.unidad_medida ?? it?.presentacion ?? 'BULTO').trim(),
+      codigo,
+      descripcion,
+      unidad_medida: normalizeIncomingUnit(
+        it?.unidad_medida ?? it?.unidad ?? it?.presentacion ?? it?.unid,
+        descripcion
+      ),
       cantidad_solicitada: Number.isFinite(cant) ? cant : 0,
       cantidad_despachada: Number(it?.cantidad_despachada ?? 0) || 0,
       precio_unitario: Number.isFinite(precio) ? precio : 0,
@@ -56,7 +111,7 @@ function mapDirectSupabaseRowToDbOrder(row: any): DbOrder {
   const calculatedTotal = Number(
     articulos.reduce((acc: number, it: any) => acc + (Number(it.sub_total) || 0), 0).toFixed(2)
   );
-  const declaredTotal = Number(row.total_pedido ?? row.monto_pedido ?? rawOrd.monto_pedido ?? 0);
+  const declaredTotal = Number(row.total_pedido ?? row.monto_pedido ?? rawOrd.total_pedido ?? rawOrd.monto_pedido ?? 0);
   const finalTotal =
     calculatedTotal > 0 &&
     (declaredTotal <= 0 ||
@@ -74,6 +129,7 @@ function mapDirectSupabaseRowToDbOrder(row: any): DbOrder {
     obsText.match(/\b(?:OC|ORDEN\s+DE\s+COMPRA)\s*[:#]?\s*([A-Z0-9-]{4,})/i);
   const extractedOc =
     rawOrd.numero_oc ||
+    rawOrd.orden_compra ||
     rawOrd.ordenCompraAlkosto ||
     rawOrd.orden_compra_alkosto ||
     (ocMatch ? ocMatch[1].trim() : undefined);
@@ -89,27 +145,52 @@ function mapDirectSupabaseRowToDbOrder(row: any): DbOrder {
           .replace(/\b(?:OC|ORDEN\s+DE\s+COMPRA)\s*[:#]?\s*[A-Z0-9-]{4,}\s*\|?\s*/gi, '')
           .trim() || undefined);
 
+  const rowSucursal = String(row.sucursal || '').trim();
+  const explicitBranch = String(
+    rawOrd.sucursal_cliente ||
+    rawOrd.sucursalNombre ||
+    rawOrd.sucursal_nombre ||
+    rawOrd.tienda ||
+    (rowSucursal && rowSucursal.toUpperCase() !== 'MARACAIBO' ? rowSucursal : '') ||
+    row.cliente ||
+    rawOrd.cliente ||
+    ''
+  ).trim();
+  const resolvedCliente = String(
+    row.cliente && String(row.cliente).trim().toUpperCase() !== 'ALKOSTO'
+      ? row.cliente
+      : explicitBranch || row.cliente || rawOrd.cliente || ''
+  ).trim();
+  const resolvedRuta = String(row.ruta || rawOrd.ruta || rawOrd.vendedor || rawOrd.vendedora || '').trim();
+  const resolvedVendedor = String(rawOrd.vendedor || row.ruta || rawOrd.ruta || rawOrd.vendedora || '').trim();
+  const resolvedCadena =
+    rawOrd.cadena ||
+    rawOrd.origen ||
+    (resolvedCliente.toUpperCase().includes('ALKOSTO') ? 'ALKOSTO' : undefined);
+
   return {
     id: row.id,
     status: normalizedStatus,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    sucursal: rowSucursal || rawOrd.sucursal || undefined,
     statusHistory: row.status_history || [],
     rejectReason: row.reject_reason || undefined,
     cxcNote: row.cxc_note || undefined,
     factNote: row.fact_note || undefined,
     isArchived: Boolean(row.is_archived),
     order: {
-      cliente: row.cliente || rawOrd.sucursal_cliente || rawOrd.cliente || '',
-      sucursal_cliente: rawOrd.sucursal_cliente || row.cliente || '',
-      cadena: rawOrd.cadena || rawOrd.origen || undefined,
+      cliente: resolvedCliente,
+      sucursal_cliente: explicitBranch || resolvedCliente,
+      sucursal: rowSucursal || rawOrd.sucursal || explicitBranch || undefined,
+      cadena: resolvedCadena,
       numero_oc: extractedOc,
       direccion_despacho: extractedDir,
       observacion_formateada: obsText,
-      vendedor: row.ruta || rawOrd.vendedor || '',
+      vendedor: resolvedVendedor,
       total_renglones: articulos.length,
       id_cliente: row.id_cliente || rawOrd.id_cliente || '',
-      ruta: row.ruta || rawOrd.vendedor || '',
+      ruta: resolvedRuta,
       supervisor: row.supervisor || rawOrd.supervisor || '',
       chofer: row.chofer || rawOrd.chofer || '',
       observaciones: obsText,
@@ -118,7 +199,7 @@ function mapDirectSupabaseRowToDbOrder(row: any): DbOrder {
       numero_pedido: row.numero_pedido || rawOrd.numero_pedido || '',
       total_pedido: finalTotal,
       monto_pedido: finalTotal,
-      origen: rawOrd.cadena || rawOrd.origen || undefined,
+      origen: rawOrd.origen || resolvedCadena,
     },
   };
 }
@@ -219,6 +300,7 @@ function isGhostTestOrder(o: DbOrder): boolean {
 function normalizeExternalChainOrder(item: DbOrder): DbOrder {
   const id = String(item.id || '').trim().toLowerCase();
   const num = String(item.order?.numero_pedido || '').trim().toUpperCase();
+  const cadenaOrOrigen = String(item.order?.cadena || item.order?.origen || '').trim().toUpperCase();
   const history = Array.isArray(item.statusHistory) ? item.statusHistory : [];
   const rawSt = String(item.status || '').trim().toUpperCase();
   let nextStatus: OrderStatus = (
@@ -232,13 +314,19 @@ function normalizeExternalChainOrder(item: DbOrder): DbOrder {
       num === 'APP-FDV' ||
       num === 'PENDIENTE' ||
       num === 'AUTO';
+    const wasCreatedManuallyInVentas = history.some((h: any) => h && h.status === 'CREADO');
     const wasValidatedInManuales = history.some(
       (h: any) =>
         h &&
         h.status === 'PENDIENTE_CXC' &&
         (String(h.reason || '').includes('Validado') || String(h.reason || '').includes('Aprobado'))
     );
-    if (hasShortCorrelativo && !wasValidatedInManuales && (id.startsWith('alk-') || num === 'APP-FDV' || num === 'PENDIENTE')) {
+    const isExternalChainSource =
+      id.startsWith('alk-') ||
+      num === 'APP-FDV' ||
+      num === 'PENDIENTE' ||
+      (!wasCreatedManuallyInVentas && (cadenaOrOrigen.includes('ALKOSTO') || cadenaOrOrigen.includes('FAMILIA')));
+    if (hasShortCorrelativo && !wasValidatedInManuales && isExternalChainSource) {
       nextStatus = 'POR_VALIDAR';
     }
   }
@@ -247,13 +335,16 @@ function normalizeExternalChainOrder(item: DbOrder): DbOrder {
   const arts = Array.isArray(item.order?.articulos) ? item.order.articulos : [];
   let sumRenglones = 0;
   const normalizedArts = arts.map((a: any) => {
-    const cant = Number(a?.cantidad_solicitada) || 0;
-    const precio = Number(a?.precio_unitario) || 0;
-    const rawSub = Number(a?.sub_total) || 0;
+    const cant = Number(a?.cantidad_solicitada ?? a?.cantidad ?? 0) || 0;
+    const precio = Number(a?.precio_unitario ?? a?.precio ?? 0) || 0;
+    const rawSub = Number(a?.sub_total ?? a?.subtotal ?? 0) || 0;
     const subTotal = cant > 0 && precio > 0 ? Number((cant * precio).toFixed(2)) : Number(rawSub.toFixed(2));
+    const desc = String(a?.descripcion ?? a?.producto ?? '').trim();
     sumRenglones += subTotal;
     return {
       ...a,
+      descripcion: desc || a?.descripcion || '',
+      unidad_medida: normalizeIncomingUnit(a?.unidad_medida ?? a?.unidad, desc),
       cantidad_solicitada: cant,
       precio_unitario: precio,
       sub_total: subTotal
@@ -326,17 +417,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         supabase
           .from('orders')
           .select('*')
-          .in('status', [
-            'POR_VALIDAR',
-            'POR VALIDAR',
-            'ERROR_FORMATO',
-            'PENDIENTE',
-            'EN_ESPERA',
-            'EN ESPERA',
-            'ENVIADO',
-            'POR_APROBAR',
-            'RECIBIDO'
-          ])
+          .in('status', WAITING_ROOM_QUERY_STATUSES)
           .order('created_at', { ascending: false }),
         supabase
           .from('deleted_orders')
@@ -354,7 +435,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       const directWaitingOrders: DbOrder[] =
         directWaitingResult.status === 'fulfilled' && Array.isArray(directWaitingResult.value.data)
-          ? directWaitingResult.value.data.map(mapDirectSupabaseRowToDbOrder)
+          ? directWaitingResult.value.data
+              .filter((r: any) => r && r.is_archived !== true)
+              .map(mapDirectSupabaseRowToDbOrder)
           : [];
 
       if (apiResult.status === 'fulfilled' && apiResult.value.ok) {
@@ -368,7 +451,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const { data: fallbackRows, error: fbError } = await supabase
         .from('orders')
         .select('*')
-        .is('is_archived', false)
+        .or('is_archived.is.false,is_archived.is.null')
         .order('created_at', { ascending: false })
         .range(0, 999);
 
@@ -407,44 +490,56 @@ export const useAppStore = create<AppState>((set, get) => ({
   subscribeToWaitingRoomRealtime: () => {
     activeRealtimeSubscribers++;
     if (!activeRealtimeChannel) {
-      activeRealtimeChannel = supabase
-        .channel('sala-espera-orders-realtime')
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'orders' },
-          (payload: any) => {
-            try {
-              const eventType = payload?.eventType;
-              if (eventType === 'INSERT' || eventType === 'UPDATE') {
-                const newRow = payload.new;
-                if (newRow && newRow.id && !deletedOrderIdsClientMemory.has(String(newRow.id))) {
-                  const mapped = normalizeExternalChainOrder(mapDirectSupabaseRowToDbOrder(newRow));
-                  if (!isGhostTestOrder(mapped)) {
-                    const current = get().orders;
-                    const exists = current.some(o => o.id === mapped.id);
-                    const nextOrders = exists
-                      ? current.map(o => (o.id === mapped.id ? mapped : o))
-                      : [mapped, ...current];
-                    set({ orders: dedupeAndFilterOrders(nextOrders) });
-                  }
-                }
-                // Reconciliación diferida con buffer solo en INSERT/UPDATE para ráfagas de 7+ pedidos simultáneos
-                if (realtimeBurstTimeout) clearTimeout(realtimeBurstTimeout);
-                realtimeBurstTimeout = setTimeout(() => {
-                  get().fetchOrders().catch(() => {});
-                }, 450);
-              } else if (eventType === 'DELETE') {
-                const deletedId = payload?.old?.id;
-                if (deletedId) {
-                  rememberDeletedIdsClient([String(deletedId)]);
-                  set({ orders: get().orders.filter(o => o.id !== deletedId) });
-                }
-              }
-            } catch (rtErr) {
-              console.warn('Error en listener Real-Time de Sala de Espera:', rtErr);
+      const handleUpsertRealtime = (payload: any) => {
+        try {
+          const newRow = payload?.new;
+          if (newRow && newRow.id && !deletedOrderIdsClientMemory.has(String(newRow.id))) {
+            if (newRow.is_archived === true) {
+              set({ orders: get().orders.filter(o => o.id !== newRow.id) });
+              return;
+            }
+            const mapped = normalizeExternalChainOrder(mapDirectSupabaseRowToDbOrder(newRow));
+            if (!isGhostTestOrder(mapped)) {
+              const current = get().orders;
+              const isWaitingRoomStatus = mapped.status === 'POR_VALIDAR' || mapped.status === 'ERROR_FORMATO';
+              const exists = current.some(o => o.id === mapped.id);
+
+              // Si es un INSERT nuevo o un UPDATE en Sala de Espera, ubicarlo inmediatamente al inicio (índice 0)
+              const nextOrders =
+                !exists || isWaitingRoomStatus
+                  ? [mapped, ...current.filter(o => o.id !== mapped.id)]
+                  : current.map(o => (o.id === mapped.id ? mapped : o));
+
+              set({ orders: dedupeAndFilterOrders(nextOrders) });
             }
           }
-        )
+          // Reconciliación diferida anti-ráfaga para lotes simultáneos de pedidos
+          if (realtimeBurstTimeout) clearTimeout(realtimeBurstTimeout);
+          realtimeBurstTimeout = setTimeout(() => {
+            get().fetchOrders().catch(() => {});
+          }, 450);
+        } catch (rtErr) {
+          console.warn('Error en listener Real-Time (INSERT/UPDATE) de Sala de Espera:', rtErr);
+        }
+      };
+
+      const handleDeleteRealtime = (payload: any) => {
+        try {
+          const deletedId = payload?.old?.id;
+          if (deletedId) {
+            rememberDeletedIdsClient([String(deletedId)]);
+            set({ orders: get().orders.filter(o => o.id !== deletedId) });
+          }
+        } catch (rtErr) {
+          console.warn('Error en listener Real-Time (DELETE) de Sala de Espera:', rtErr);
+        }
+      };
+
+      activeRealtimeChannel = supabase
+        .channel('sala-espera-orders-realtime')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders' }, handleUpsertRealtime)
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders' }, handleUpsertRealtime)
+        .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'orders' }, handleDeleteRealtime)
         .subscribe();
     }
 

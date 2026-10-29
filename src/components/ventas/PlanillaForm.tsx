@@ -76,17 +76,23 @@ export const isRowEmpty = (a: ArticuloItem) =>
 const UNIDADES = ['UNIDAD', 'BULTO', 'PIEZA', 'KG'];
 
 const UNIT_NORMALIZE_MAP: Record<string, string> = {
-  KG: 'KG', KGS: 'KG', KILO: 'KG', KILOS: 'KG',
+  KG: 'KG', KGS: 'KG', KILO: 'KG', KILOS: 'KG', KILOGRAMO: 'KG', KILOGRAMOS: 'KG',
   UND: 'UNIDAD', UNID: 'UNIDAD', UNI: 'UNIDAD', UNIDAD: 'UNIDAD', UNIDADES: 'UNIDAD', UN: 'UNIDAD',
   BTO: 'BULTO', BTOS: 'BULTO', BULTO: 'BULTO', BULTOS: 'BULTO',
-  CJ: 'BULTO', CJA: 'BULTO', CAJ: 'BULTO', CAJA: 'BULTO', CAJAS: 'BULTO', CJS: 'BULTO', BLT: 'BULTO', EMP: 'BULTO',
+  CJ: 'BULTO', CJA: 'BULTO', CAJ: 'BULTO', CAJA: 'BULTO', CAJAS: 'BULTO', CJS: 'BULTO', BLT: 'BULTO', EMP: 'BULTO', PAQ: 'BULTO', PAQUETE: 'BULTO', SACO: 'BULTO',
   PZA: 'PIEZA', PZAS: 'PIEZA', PZ: 'PIEZA', PIEZA: 'PIEZA', PIEZAS: 'PIEZA',
 };
 
-export const normalizeUnidadMedida = (raw?: string): string => {
-  if (!raw) return '';
-  const clean = raw.trim().toUpperCase().replace(/\./g, '');
-  return UNIT_NORMALIZE_MAP[clean] || (UNIDADES.includes(clean) ? clean : '');
+export const normalizeUnidadMedida = (raw?: string, descFallback?: string): string => {
+  if (raw) {
+    const clean = raw.trim().toUpperCase().replace(/\./g, '');
+    const mapped = UNIT_NORMALIZE_MAP[clean] || (UNIDADES.includes(clean) ? clean : '');
+    if (mapped) return mapped;
+  }
+  if (descFallback) {
+    return /\bX\s*KG\b|\bPOR\s*KG\b|\bXKG\b/i.test(descFallback) ? 'KG' : 'BULTO';
+  }
+  return '';
 };
 
 /** Normaliza los artículos y completa hasta los 15 renglones estándar. */
@@ -112,12 +118,17 @@ export const padRows = (arts: Partial<ArticuloItem>[] = []): ArticuloItem[] => {
       }
     }
 
+    const hasContent = Boolean(descripcion || codigo || cant > 0 || precio > 0);
+    const unidadNormalizada = hasContent
+      ? normalizeUnidadMedida(a?.unidad_medida, descripcion || 'BULTO')
+      : normalizeUnidadMedida(a?.unidad_medida);
+
     return {
       ...emptyRow(),
       ...a,
       codigo,
       descripcion,
-      unidad_medida: normalizeUnidadMedida(a?.unidad_medida),
+      unidad_medida: unidadNormalizada,
       cantidad_solicitada: cant,
       precio_unitario: precio,
       sub_total: round2(cant * precio),

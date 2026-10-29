@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { DbOrder, OrderStatus } from '../../src/types.js';
-import { parseAndValidateChainOrders } from '../services/chainOrderParser.js';
+import { parseAndValidateChainOrders, normalizeChainUnit } from '../services/chainOrderParser.js';
 
 const router = Router();
 const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
@@ -36,6 +36,27 @@ const WAITING_ROOM_RAW_STATUSES = new Set([
   'RECIBIDO'
 ]);
 
+const WAITING_ROOM_QUERY_STATUSES = [
+  'POR_VALIDAR',
+  'POR VALIDAR',
+  'ERROR_FORMATO',
+  'PENDIENTE',
+  'EN_ESPERA',
+  'EN ESPERA',
+  'ENVIADO',
+  'POR_APROBAR',
+  'RECIBIDO',
+  'por_validar',
+  'por validar',
+  'error_formato',
+  'pendiente',
+  'en_espera',
+  'en espera',
+  'enviado',
+  'por_aprobar',
+  'recibido'
+];
+
 // Detecta pedidos enviados desde la app externa de cadenas (Sairú / Alkosto / Familia Center)
 // que entraron con un estado pendiente/en espera o con 'PENDIENTE_CXC' y correlativo corto sin pasar por Sala de Espera
 function isUnvalidatedExternalChainOrder(row: any): boolean {
@@ -43,6 +64,8 @@ function isUnvalidatedExternalChainOrder(row: any): boolean {
   const id = String(row.id || '').trim().toLowerCase();
   const num = String(row.numero_pedido ?? row.order?.numero_pedido ?? '').trim().toUpperCase();
   const rawStatus = String(row.status || '').trim().toUpperCase();
+  const rawOrd = row.raw_order && typeof row.raw_order === 'object' ? row.raw_order : {};
+  const cadenaOrOrigen = String(rawOrd.cadena || rawOrd.origen || row.order?.cadena || row.order?.origen || '').trim().toUpperCase();
 
   if (rawStatus !== 'POR_VALIDAR' && WAITING_ROOM_RAW_STATUSES.has(rawStatus)) {
     return true;
@@ -61,13 +84,19 @@ function isUnvalidatedExternalChainOrder(row: any): boolean {
       num === 'APP-FDV' ||
       num === 'PENDIENTE' ||
       num === 'AUTO';
+    const wasCreatedManuallyInVentas = history.some((h: any) => h && h.status === 'CREADO');
     const wasValidatedInManuales = history.some(
       (h: any) =>
         h &&
         h.status === 'PENDIENTE_CXC' &&
         (String(h.reason || '').includes('Validado') || String(h.reason || '').includes('Aprobado'))
     );
-    if (hasExternalCorrelativo && !wasValidatedInManuales && (id.startsWith('alk-') || num === 'APP-FDV' || num === 'PENDIENTE')) {
+    const isExternalChainSource =
+      id.startsWith('alk-') ||
+      num === 'APP-FDV' ||
+      num === 'PENDIENTE' ||
+      (!wasCreatedManuallyInVentas && (cadenaOrOrigen.includes('ALKOSTO') || cadenaOrOrigen.includes('FAMILIA')));
+    if (hasExternalCorrelativo && !wasValidatedInManuales && isExternalChainSource) {
       return true;
     }
   }
@@ -357,7 +386,11 @@ async function ensureSairuSyncIfDue(force = false): Promise<void> {
 function mapSupabaseToDbOrder(row: any): DbOrder {
   const rawStatus = String(row.status || '').trim().toUpperCase();
   const normalizedStatus = (
-    WAITING_ROOM_RAW_STATUSES.has(rawStatus) ? 'POR_VALIDAR' : rawStatus
+    WAITING_ROOM_RAW_STATUSES.has(rawStatus)
+      ? 'POR_VALIDAR'
+      : rawStatus === 'ERROR FORMATO'
+        ? 'ERROR_FORMATO'
+        : rawStatus
   ) as OrderStatus;
   const rawOrd = row.raw_order && typeof row.raw_order === 'object' ? row.raw_order : {};
   const rawArticulosSource =
@@ -367,24 +400,42 @@ function mapSupabaseToDbOrder(row: any): DbOrder {
         ? rawOrd.articulos
         : Array.isArray(rawOrd.items) && rawOrd.items.length > 0
           ? rawOrd.items
-          : Array.isArray(rawOrd.renglones) && rawOrd.renglones.length > 0
-            ? rawOrd.renglones
-            : [];
+          : Array.isArray(rawOrd.productos) && rawOrd.productos.length > 0
+            ? rawOrd.productos
+            : Array.isArray(rawOrd.renglones) && rawOrd.renglones.length > 0
+              ? rawOrd.renglones
+              : Array.isArray(rawOrd.detalle) && rawOrd.detalle.length > 0
+                ? rawOrd.detalle
+                : [];
 
   const articulos = rawArticulosSource.map((it: any) => {
-    const cant = Number(it?.cantidad_solicitada ?? it?.cantidadCajas ?? it?.cantidad ?? 0);
-    const precio = Number(it?.precio_unitario ?? it?.precioUnitarioUSD ?? it?.precio ?? 0);
-    const rawSub = Number(it?.sub_total ?? it?.subtotalUSD ?? it?.subtotal ?? 0);
+    const cant = Number(
+      it?.cantidad_solicitada ?? it?.cantidadCajas ?? it?.cantidad ?? it?.cant ?? it?.cajas ?? it?.bultos ?? 0
+    );
+    const precio = Number(
+      it?.precio_unitario ?? it?.precioUnitarioUSD ?? it?.costoUnitario ?? it?.costo_unitario ?? it?.precio ?? 0
+    );
+    const rawSub = Number(it?.sub_total ?? it?.subtotalUSD ?? it?.subtotal ?? it?.total ?? it?.monto ?? 0);
     const subTotal =
       cant > 0 && precio > 0
         ? Number((cant * precio).toFixed(2))
         : Number.isFinite(rawSub) && rawSub >= 0
           ? Number(rawSub.toFixed(2))
           : 0;
+    const rawCode = String(
+      it?.codigo ?? it?.sku ?? it?.skuCodizulca ?? it?.codigo_producto ?? it?.codigo_articulo ?? ''
+    ).trim();
+    const codigo = /^\d{1,5}$/.test(rawCode) ? rawCode.padStart(6, '0') : rawCode;
+    const descripcion = String(
+      it?.descripcion ?? it?.producto ?? it?.nombre ?? it?.nombre_producto ?? it?.articulo ?? ''
+    ).trim();
     return {
-      codigo: String(it?.codigo ?? it?.sku ?? '').trim(),
-      descripcion: String(it?.descripcion ?? it?.producto ?? '').trim(),
-      unidad_medida: String(it?.unidad_medida ?? it?.presentacion ?? 'BULTO').trim(),
+      codigo,
+      descripcion,
+      unidad_medida: normalizeChainUnit(
+        it?.unidad_medida ?? it?.unidad ?? it?.presentacion ?? it?.unid,
+        descripcion
+      ),
       cantidad_solicitada: Number.isFinite(cant) ? cant : 0,
       cantidad_despachada: Number(it?.cantidad_despachada ?? 0) || 0,
       precio_unitario: Number.isFinite(precio) ? precio : 0,
@@ -395,7 +446,7 @@ function mapSupabaseToDbOrder(row: any): DbOrder {
   const calculatedTotal = Number(
     articulos.reduce((acc: number, it: any) => acc + (Number(it.sub_total) || 0), 0).toFixed(2)
   );
-  const declaredTotal = Number(row.total_pedido ?? row.monto_pedido ?? rawOrd.monto_pedido ?? 0);
+  const declaredTotal = Number(row.total_pedido ?? row.monto_pedido ?? rawOrd.total_pedido ?? rawOrd.monto_pedido ?? 0);
   const finalTotal =
     calculatedTotal > 0 &&
     (declaredTotal <= 0 ||
@@ -413,6 +464,7 @@ function mapSupabaseToDbOrder(row: any): DbOrder {
     obsText.match(/\b(?:OC|ORDEN\s+DE\s+COMPRA)\s*[:#]?\s*([A-Z0-9-]{4,})/i);
   const extractedOc =
     rawOrd.numero_oc ||
+    rawOrd.orden_compra ||
     rawOrd.ordenCompraAlkosto ||
     rawOrd.orden_compra_alkosto ||
     (ocMatch ? ocMatch[1].trim() : undefined);
@@ -428,27 +480,52 @@ function mapSupabaseToDbOrder(row: any): DbOrder {
           .replace(/\b(?:OC|ORDEN\s+DE\s+COMPRA)\s*[:#]?\s*[A-Z0-9-]{4,}\s*\|?\s*/gi, '')
           .trim() || undefined);
 
+  const rowSucursal = String(row.sucursal || '').trim();
+  const explicitBranch = String(
+    rawOrd.sucursal_cliente ||
+    rawOrd.sucursalNombre ||
+    rawOrd.sucursal_nombre ||
+    rawOrd.tienda ||
+    (rowSucursal && rowSucursal.toUpperCase() !== 'MARACAIBO' ? rowSucursal : '') ||
+    row.cliente ||
+    rawOrd.cliente ||
+    ''
+  ).trim();
+  const resolvedCliente = String(
+    row.cliente && String(row.cliente).trim().toUpperCase() !== 'ALKOSTO'
+      ? row.cliente
+      : explicitBranch || row.cliente || rawOrd.cliente || ''
+  ).trim();
+  const resolvedRuta = String(row.ruta || rawOrd.ruta || rawOrd.vendedor || rawOrd.vendedora || '').trim();
+  const resolvedVendedor = String(rawOrd.vendedor || row.ruta || rawOrd.ruta || rawOrd.vendedora || '').trim();
+  const resolvedCadena =
+    rawOrd.cadena ||
+    rawOrd.origen ||
+    (resolvedCliente.toUpperCase().includes('ALKOSTO') ? 'ALKOSTO' : undefined);
+
   return {
     id: row.id,
     status: normalizedStatus,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    sucursal: rowSucursal || rawOrd.sucursal || undefined,
     statusHistory: row.status_history || [],
     rejectReason: row.reject_reason || undefined,
     cxcNote: row.cxc_note || undefined,
     factNote: row.fact_note || undefined,
     isArchived: Boolean(row.is_archived),
     order: {
-      cliente: row.cliente || rawOrd.sucursal_cliente || rawOrd.cliente || '',
-      sucursal_cliente: rawOrd.sucursal_cliente || row.cliente || '',
-      cadena: rawOrd.cadena || rawOrd.origen || undefined,
+      cliente: resolvedCliente,
+      sucursal_cliente: explicitBranch || resolvedCliente,
+      sucursal: rowSucursal || rawOrd.sucursal || explicitBranch || undefined,
+      cadena: resolvedCadena,
       numero_oc: extractedOc,
       direccion_despacho: extractedDir,
       observacion_formateada: obsText,
-      vendedor: row.ruta || rawOrd.vendedor || '',
+      vendedor: resolvedVendedor,
       total_renglones: articulos.length,
       id_cliente: row.id_cliente || rawOrd.id_cliente || '',
-      ruta: row.ruta || rawOrd.vendedor || '',
+      ruta: resolvedRuta,
       supervisor: row.supervisor || rawOrd.supervisor || '',
       chofer: row.chofer || rawOrd.chofer || '',
       observaciones: obsText,
@@ -457,7 +534,7 @@ function mapSupabaseToDbOrder(row: any): DbOrder {
       numero_pedido: row.numero_pedido || rawOrd.numero_pedido || '',
       total_pedido: finalTotal,
       monto_pedido: finalTotal,
-      origen: rawOrd.cadena || rawOrd.origen || undefined,
+      origen: rawOrd.origen || resolvedCadena,
     }
   };
 }
@@ -554,8 +631,8 @@ function triggerCutoffIfDue() {
   }
 }
 
-// Columnas requeridas para los pedidos activos (incluye raw_order para conservar metadatos completos de OC, sucursal y dirección)
-const ACTIVE_ORDERS_COLUMNS = 'id, status, created_at, updated_at, status_history, reject_reason, cxc_note, fact_note, is_archived, cliente, id_cliente, ruta, supervisor, chofer, observaciones, fecha, articulos, numero_pedido, total_pedido, monto_pedido, raw_order';
+// Columnas requeridas para los pedidos activos (incluye sucursal y raw_order para conservar metadatos completos de OC, sucursal y dirección)
+const ACTIVE_ORDERS_COLUMNS = 'id, status, created_at, updated_at, status_history, reject_reason, cxc_note, fact_note, is_archived, cliente, id_cliente, ruta, supervisor, chofer, sucursal, observaciones, fecha, articulos, numero_pedido, total_pedido, monto_pedido, raw_order';
 
 // GET todos los pedidos activos (optimizado para respuesta instantánea y sincronización garantizada de Sala de Espera)
 router.get('/', async (req, res) => {
@@ -570,23 +647,13 @@ router.get('/', async (req, res) => {
       supabase
         .from('orders')
         .select(ACTIVE_ORDERS_COLUMNS)
-        .is('is_archived', false)
+        .or('is_archived.is.false,is_archived.is.null')
         .order('created_at', { ascending: false })
         .range(0, 999),
       supabase
         .from('orders')
         .select(ACTIVE_ORDERS_COLUMNS)
-        .in('status', [
-          'POR_VALIDAR',
-          'POR VALIDAR',
-          'ERROR_FORMATO',
-          'PENDIENTE',
-          'EN_ESPERA',
-          'EN ESPERA',
-          'ENVIADO',
-          'POR_APROBAR',
-          'RECIBIDO'
-        ])
+        .in('status', WAITING_ROOM_QUERY_STATUSES)
         .order('created_at', { ascending: false })
     ]);
       
@@ -594,10 +661,10 @@ router.get('/', async (req, res) => {
     
     const mergedMap = new Map<string, any>();
     for (const r of waitingQuery.data || []) {
-      if (r && r.id && !deletedAlkostoIdsMemory.has(r.id)) mergedMap.set(r.id, r);
+      if (r && r.id && r.is_archived !== true && !deletedAlkostoIdsMemory.has(r.id)) mergedMap.set(r.id, r);
     }
     for (const r of activeQuery.data || []) {
-      if (r && r.id && !deletedAlkostoIdsMemory.has(r.id) && !mergedMap.has(r.id)) mergedMap.set(r.id, r);
+      if (r && r.id && r.is_archived !== true && !deletedAlkostoIdsMemory.has(r.id) && !mergedMap.has(r.id)) mergedMap.set(r.id, r);
     }
     const allRows = Array.from(mergedMap.values());
 
@@ -652,21 +719,11 @@ router.post('/sync-alkosto', async (req, res) => {
     const { data: waitingRows } = await supabase
       .from('orders')
       .select(ACTIVE_ORDERS_COLUMNS)
-      .in('status', [
-        'POR_VALIDAR',
-        'POR VALIDAR',
-        'ERROR_FORMATO',
-        'PENDIENTE',
-        'EN_ESPERA',
-        'EN ESPERA',
-        'ENVIADO',
-        'POR_APROBAR',
-        'RECIBIDO'
-      ])
+      .in('status', WAITING_ROOM_QUERY_STATUSES)
       .order('created_at', { ascending: false });
 
     const waitingOrders = (waitingRows || [])
-      .filter(row => !isTestOrGhostOrder(row) && !deletedAlkostoIdsMemory.has(row.id))
+      .filter(row => row && row.is_archived !== true && !isTestOrGhostOrder(row) && !deletedAlkostoIdsMemory.has(row.id))
       .map(row => {
         const o = mapSupabaseToDbOrder(row);
         o.isArchived = false;

@@ -1,9 +1,14 @@
 import React from 'react';
-import { X, Printer, User, Trash2, Loader2, AlertTriangle, FileText, MapPin } from 'lucide-react';
+import { X, Printer, User, Trash2, Loader2, AlertTriangle, FileText, MapPin, Package } from 'lucide-react';
 import { DbOrder, OrderData } from '../../types';
 import { useAppStore } from '../../store/index';
 import { useAuthStore } from '../../store/auth';
 import { PlanillaForm, padRows } from '../ventas/PlanillaForm';
+import {
+  isAlkostoSairuOrder,
+  isRecentlyArrivedOrder,
+  AlkostoSairuCorporateBadge
+} from '../ventas/SalaEsperaAlkosto';
 import { printOrder } from '../../lib/pdfUtils';
 
 interface OrderModalProps {
@@ -279,6 +284,8 @@ export const OrderModal: React.FC<OrderModalProps> = ({ order, onClose }) => {
   };
 
   const articulosCount = activeRows.length;
+  const isAlkostoSairu = isAlkostoSairuOrder(order);
+  const sucursalDisplay = String(draft.sucursal_cliente || draft.cliente || ord.sucursal || 'SUCURSAL NO DEFINIDA').trim();
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
@@ -286,8 +293,11 @@ export const OrderModal: React.FC<OrderModalProps> = ({ order, onClose }) => {
         
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-slate-50">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5 flex-wrap">
             <h2 className="text-lg font-extrabold text-slate-800">Detalles del Pedido</h2>
+            {isAlkostoSairu && (
+              <AlkostoSairuCorporateBadge isRecent={isWaitingRoomOrder && isRecentlyArrivedOrder(order)} />
+            )}
             <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider ${
               order.status === 'COMPLETADO' ? 'bg-cyan-100 text-cyan-800' :
               order.status === 'RECHAZADO' || order.status === 'ERROR_FORMATO' ? 'bg-red-100 text-red-800' :
@@ -334,11 +344,11 @@ export const OrderModal: React.FC<OrderModalProps> = ({ order, onClose }) => {
             </div>
           )}
           
-          {/* Resumen Superior con Total en Tiempo Real */}
+          {/* Resumen Superior con Sucursal, Vendedor y Total en Tiempo Real */}
           <div className="bg-white rounded-xl border border-slate-200 p-4 flex flex-col md:flex-row md:justify-between md:items-center gap-4 shadow-sm">
             <div>
               <h3 className="text-lg font-extrabold text-slate-800 uppercase leading-tight mb-2">
-                {draft.cliente || ord.cliente || 'CLIENTE NO DEFINIDO'}
+                {sucursalDisplay}
               </h3>
               <div className="flex items-center gap-2 text-xs text-slate-500 font-medium flex-wrap">
                 <span className="bg-red-50 text-codizulca-red px-2 py-0.5 rounded border border-red-100 font-mono font-bold">
@@ -352,9 +362,11 @@ export const OrderModal: React.FC<OrderModalProps> = ({ order, onClose }) => {
                     OC: {numeroOc}
                   </span>
                 )}
+                <span>Sucursal: <strong className="text-slate-800 uppercase">{sucursalDisplay}</strong></span>
+                <span>•</span>
                 <span>Fecha: {draft.fecha || ord.fecha || '-'}</span>
                 <span>•</span>
-                <span>Ruta/Vendedor: <strong className="text-slate-700">{draft.ruta || ord.ruta || '-'}</strong></span>
+                <span>Ruta/Vendedor: <strong className="text-slate-700">{draft.ruta || draft.vendedor || ord.ruta || '-'}</strong></span>
                 <span>•</span>
                 <span>Artículos válidos: <strong className="text-slate-800">{articulosCount}</strong></span>
               </div>
@@ -366,6 +378,58 @@ export const OrderModal: React.FC<OrderModalProps> = ({ order, onClose }) => {
               </div>
             </div>
           </div>
+
+          {/* Vista Rápida de Productos, Cantidades, Precios y Sucursal en Sala de Espera */}
+          {isWaitingRoomOrder && activeRows.length > 0 && (
+            <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+              <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+                <h4 className="text-xs font-extrabold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                  <Package size={14} className="text-codizulca-red" />
+                  Resumen de Productos Recibidos ({activeRows.length} {activeRows.length === 1 ? 'ítem' : 'ítems'} — {sucursalDisplay})
+                </h4>
+                <span className="text-[11px] font-bold text-slate-500">
+                  Despacho: <strong className="text-slate-700">{direccionDespacho || sucursalDisplay}</strong>
+                </span>
+              </div>
+              <div className="overflow-x-auto rounded-lg border border-slate-200">
+                <table className="w-full text-xs border-collapse">
+                  <thead className="bg-slate-900 text-white uppercase text-[10px] tracking-wider">
+                    <tr>
+                      <th className="px-2.5 py-2 text-left font-bold">#</th>
+                      <th className="px-2.5 py-2 text-left font-bold">Código</th>
+                      <th className="px-2.5 py-2 text-left font-bold">Producto</th>
+                      <th className="px-2.5 py-2 text-center font-bold">Unidad</th>
+                      <th className="px-2.5 py-2 text-right font-bold">Cantidad</th>
+                      <th className="px-2.5 py-2 text-right font-bold">Precio Unit.</th>
+                      <th className="px-2.5 py-2 text-right font-bold">Subtotal</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {activeRows.map((rowItem, i) => {
+                      const cant = Number(rowItem.cantidad_solicitada) || 0;
+                      const precio = Number(rowItem.precio_unitario) || 0;
+                      const sub = cant > 0 && precio > 0 ? Number((cant * precio).toFixed(2)) : Number(rowItem.sub_total) || 0;
+                      return (
+                        <tr key={i} className="hover:bg-slate-50">
+                          <td className="px-2.5 py-1.5 font-mono text-slate-400 font-bold">{i + 1}</td>
+                          <td className="px-2.5 py-1.5 font-mono font-bold text-slate-700">{rowItem.codigo || 'S/C'}</td>
+                          <td className="px-2.5 py-1.5 font-bold text-slate-800 uppercase">{rowItem.descripcion || '-'}</td>
+                          <td className="px-2.5 py-1.5 text-center font-bold text-slate-600">{rowItem.unidad_medida || 'BULTO'}</td>
+                          <td className="px-2.5 py-1.5 text-right font-extrabold text-slate-900">{cant}</td>
+                          <td className="px-2.5 py-1.5 text-right font-semibold text-slate-700">
+                            ${precio.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+                          <td className="px-2.5 py-1.5 text-right font-extrabold text-slate-900">
+                            ${sub.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           {/* Bloque Editable de Metadatos de Orden de Compra (Cadenas Comerciales) */}
           {isWaitingRoomOrder && isEditing && (
