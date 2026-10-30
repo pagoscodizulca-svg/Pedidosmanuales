@@ -4,12 +4,9 @@ export interface Producto {
 }
 
 export const PRODUCTOS: Producto[] = [
-  { id: '000008', descripcion: 'POLLO EBENEZER POR KG' },
   { id: '000009', descripcion: 'FILETE DE PECHUGA A GRANEL POR KG' },
   { id: '000021', descripcion: 'MORTADELA ESP D/POLLO CORRAL 1X12UNI' },
   { id: '000028', descripcion: 'HUEVOS DE CONSUMO TUNAL TIPO A 1X12UNI' },
-  { id: '000046', descripcion: 'NUGGETS INSTITUCIONAL CORRAL POR KG' },
-  { id: '000069', descripcion: 'GALLINA ENTERA POR KG' },
   { id: '000073', descripcion: 'GALLINA DESNUDA POR KG' },
   { id: '000090', descripcion: 'COSTILLA' },
   { id: '000096', descripcion: 'QUESO MOZZARELLA ESPECIAL EL LUCERO (E)' },
@@ -31,7 +28,6 @@ export const PRODUCTOS: Producto[] = [
   { id: '000186', descripcion: 'TE CON DURAZNO EL TUNAL 1X12LTRS' },
   { id: '000241', descripcion: 'ESPAL. AHUM T/VISKING ALIMEX 6X3.2' },
   { id: '000242', descripcion: 'LECHE DESLACTOSADA PURISIMA1X12LT' },
-  { id: '000270', descripcion: 'NUGGETS CORRAL 12X0.460GR' },
   { id: '000302', descripcion: 'MANTEQUILLA CON SAL PURISIMA BARRA 18X200GR' },
   { id: '000337', descripcion: 'JAMON COCIDO ESTANDAR ITALICO X KG' },
   { id: '000340', descripcion: 'CHULETA AHUMADA ALIMEX X KG' },
@@ -165,5 +161,5 @@ export const PRODUCTOS: Producto[] = [
   { id: '001588', descripcion: 'REFRESCO 400ML X 15 UND' },
   { id: '001589', descripcion: 'QUESO PECORINO DE MI FINCA X KG' },
   { id: '001591', descripcion: 'QUESO AMARILLO TIPO EDAM BARRA DE MI FINCA X KG' },
-  { id: '001592', descripcion: 'SALMON POR KILO' }
+  { id: '001592', descripcion: 'SALMON POR KILO' },
 ];
