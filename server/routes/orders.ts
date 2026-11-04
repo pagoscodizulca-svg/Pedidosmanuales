@@ -632,7 +632,7 @@ async function performMonthlyCutoff() {
       .update({ is_archived: true })
       .lt('created_at', isoDate)
       .in('status', ['COMPLETADO', 'RECHAZADO'])
-      .is('is_archived', false);
+      .or('is_archived.is.false,is_archived.is.null');
   } catch (err) {
     console.error('Error in safe monthly cutoff:', err);
   }

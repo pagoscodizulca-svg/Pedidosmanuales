@@ -414,10 +414,49 @@ export const useAppStore = create<AppState>((set, get) => ({
     const isInitial = get().historyOrders.length === 0;
     if (isInitial) set({ loading: true, error: null });
     try {
-      const response = await apiFetch('/api/orders/history');
-      if (!response.ok) throw new Error('Failed to fetch history');
-      const data = await response.json();
-      set({ historyOrders: dedupeAndFilterOrders(data), loading: false });
+      try {
+        const response = await apiFetch('/api/orders/history');
+        if (response.ok) {
+          const data = await response.json();
+          if (Array.isArray(data) && data.length > 0) {
+            set({ historyOrders: dedupeAndFilterOrders(data), loading: false, error: null });
+            return;
+          }
+        }
+      } catch {
+        // Si el backend está reiniciando o no responde, continuamos con el fallback directo a Supabase
+      }
+
+      let allArchivedRows: any[] = [];
+      let page = 0;
+      const limit = 1000;
+      let hasMore = true;
+
+      while (hasMore) {
+        const { data: pageRows, error: fbError } = await supabase
+          .from('orders')
+          .select('*')
+          .eq('is_archived', true)
+          .order('created_at', { ascending: false })
+          .range(page * limit, (page + 1) * limit - 1);
+
+        if (fbError) throw fbError;
+
+        if (pageRows && pageRows.length > 0) {
+          allArchivedRows = allArchivedRows.concat(pageRows);
+          page++;
+          if (pageRows.length < limit) hasMore = false;
+        } else {
+          hasMore = false;
+        }
+      }
+
+      const mappedHistory = allArchivedRows.map((row: any) => {
+        const mapped = mapDirectSupabaseRowToDbOrder(row);
+        mapped.isArchived = true;
+        return mapped;
+      });
+      set({ historyOrders: dedupeAndFilterOrders(mappedHistory), loading: false, error: null });
     } catch (err: any) {
       set({ error: err.message, loading: false });
     }

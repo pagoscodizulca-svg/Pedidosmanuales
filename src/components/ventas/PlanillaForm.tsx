@@ -1,8 +1,9 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Plus } from 'lucide-react';
 import type { ArticuloItem, OrderData } from '../../types';
 import { CLIENTES } from '../../data/clientes';
-import { PRODUCTOS } from '../../data/productos';
+import { PRODUCTOS, type Producto } from '../../data/productos';
+import { supabase } from '../../lib/supabase';
 
 export const STANDARD_ROWS = 15;
 
@@ -17,9 +18,30 @@ const CLIENTE_BY_NAME = new Map(CLIENTES.map((c) => [c.nombre.toUpperCase(), c])
 
 const PRODUCTO_BY_ID = new Map(PRODUCTOS.map((p) => [p.id, p]));
 const PRODUCTO_BY_NUM = new Map(
-  PRODUCTOS.map((p) => [parseInt(p.id, 10), p]).filter(([k]) => !isNaN(k as number)) as [number, (typeof PRODUCTOS)[0]][]
+  PRODUCTOS.map((p) => [parseInt(p.id, 10), p]).filter(([k]) => !isNaN(k as number)) as [number, Producto][]
 );
-const PRODUCTO_BY_DESC = new Map(PRODUCTOS.map((p) => [p.descripcion.toUpperCase(), p]));
+const PRODUCTO_BY_DESC = new Map(
+  PRODUCTOS.map((p) => [p.descripcion.toUpperCase().replace(/\s+/g, ' ').trim(), p])
+);
+
+function registerCatalogProducts(items: Producto[]) {
+  for (const p of items) {
+    const cleanId = String(p.id || '').trim();
+    const cleanDesc = String(p.descripcion || '').trim().replace(/\s+/g, ' ');
+    if (!cleanId || !cleanDesc) continue;
+    const isNum = /^\d+$/.test(cleanId);
+    const paddedId = isNum ? cleanId.padStart(6, '0') : cleanId.toUpperCase();
+    const entry: Producto = { id: paddedId, descripcion: cleanDesc };
+    PRODUCTO_BY_ID.set(paddedId, entry);
+    PRODUCTO_BY_ID.set(cleanId.toUpperCase(), entry);
+    if (isNum) {
+      const n = parseInt(cleanId, 10);
+      if (!isNaN(n)) PRODUCTO_BY_NUM.set(n, entry);
+    }
+    PRODUCTO_BY_DESC.set(cleanDesc.toUpperCase(), entry);
+  }
+}
+registerCatalogProducts(PRODUCTOS);
 
 export const findClienteByCode = (raw: string) => {
   const clean = raw.replace(/[^\w]/g, '').trim().toUpperCase();
@@ -111,7 +133,7 @@ export const padRows = (arts: Partial<ArticuloItem>[] = []): ArticuloItem[] => {
         if (!descripcion) descripcion = matchedProd.descripcion;
       }
     } else if (descripcion) {
-      const matchedByDesc = PRODUCTO_BY_DESC.get(descripcion);
+      const matchedByDesc = PRODUCTO_BY_DESC.get(descripcion.replace(/\s+/g, ' ').trim());
       if (matchedByDesc) {
         codigo = matchedByDesc.id;
         descripcion = matchedByDesc.descripcion;
@@ -153,6 +175,37 @@ const cellInput =
 const labelCls = 'text-[10px] font-bold text-slate-600 uppercase whitespace-nowrap';
 
 export const PlanillaForm: React.FC<PlanillaFormProps> = ({ value, onChange, nextNumero }) => {
+  const [catalogProducts, setCatalogProducts] = useState<Producto[]>(PRODUCTOS);
+
+  useEffect(() => {
+    let active = true;
+    supabase
+      .from('productos')
+      .select('id_articulo, descripcion')
+      .then(({ data, error }) => {
+        if (!active || error || !Array.isArray(data) || data.length === 0) return;
+        const remoteItems: Producto[] = data
+          .map((r: any) => {
+            const rawId = String(r.id_articulo || r.id || '').trim();
+            const desc = String(r.descripcion || '').trim().replace(/\s+/g, ' ');
+            const isNum = /^\d+$/.test(rawId);
+            return {
+              id: isNum ? rawId.padStart(6, '0') : rawId.toUpperCase(),
+              descripcion: desc,
+            };
+          })
+          .filter((p) => p.id && p.descripcion)
+          .sort((a, b) => a.id.localeCompare(b.id));
+        if (remoteItems.length > 0) {
+          registerCatalogProducts(remoteItems);
+          setCatalogProducts(remoteItems);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const set = (patch: Partial<OrderData>) => onChange({ ...value, ...patch });
 
   const setRow = (index: number, field: keyof ArticuloItem, raw: string | number) => {
@@ -265,11 +318,11 @@ export const PlanillaForm: React.FC<PlanillaFormProps> = ({ value, onChange, nex
 
   // Auto-completar código al seleccionar o escribir Descripción de producto
   const handleItemDescripcionChange = (idx: number, raw: string) => {
-    const upper = raw.toUpperCase().trim();
+    const upper = raw.toUpperCase().replace(/\s+/g, ' ').trim();
     const found = PRODUCTO_BY_DESC.get(upper);
     const arts = [...(value.articulos || [])];
     if (found) {
-      arts[idx] = { ...arts[idx], descripcion: raw.toUpperCase(), codigo: found.id };
+      arts[idx] = { ...arts[idx], descripcion: found.descripcion, codigo: found.id };
     } else {
       arts[idx] = { ...arts[idx], descripcion: raw.toUpperCase() };
     }
@@ -325,13 +378,13 @@ export const PlanillaForm: React.FC<PlanillaFormProps> = ({ value, onChange, nex
       </datalist>
 
       <datalist id="productos-list">
-        {PRODUCTOS.map((p) => (
+        {catalogProducts.map((p) => (
           <option key={`prd-${p.id}`} value={p.descripcion} label={p.id} />
         ))}
       </datalist>
 
       <datalist id="codigos-productos-list">
-        {PRODUCTOS.map((p) => (
+        {catalogProducts.map((p) => (
           <option key={`pco-${p.id}`} value={p.id} label={p.descripcion} />
         ))}
       </datalist>
