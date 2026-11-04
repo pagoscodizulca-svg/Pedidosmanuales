@@ -116,7 +116,7 @@ async function run() {
     if (cols.length < 13) continue;
 
     const id = (cols[0] || '').replace(/"/g, '').trim();
-    if (!id || id.toUpperCase() === 'ID PEDIDO') continue;
+    if (!id || id.toUpperCase() === 'ID PEDIDO' || id === '1793055537757') continue;
 
     const fecha = standardizeDate((cols[1] || '').replace(/"/g, '').trim());
     if (!fecha || fecha > CUTOFF_DATE) continue;
@@ -250,6 +250,40 @@ async function run() {
     };
   });
 
+  // Incluir pedidos de la última semana de Octubre (26-10-2026 al 31-10-2026) y cadenas procesadas
+  const lateOctPath = path.join(__dirname, 'server', 'data', 'octubre_ultima_semana_2026.json');
+  if (fs.existsSync(lateOctPath)) {
+    const lateOctOrders = JSON.parse(fs.readFileSync(lateOctPath, 'utf8'));
+    console.log(`Cargados ${lateOctOrders.length} pedidos de cierre de Octubre (hasta ${CUTOFF_DATE}) desde server/data/octubre_ultima_semana_2026.json.`);
+    for (const lo of lateOctOrders) {
+      if (!lo || !lo.id || lo.fecha > CUTOFF_DATE) continue;
+      rowsToUpsert.push({
+        id: lo.id,
+        numero_pedido: lo.numero_pedido,
+        cliente: lo.cliente,
+        id_cliente: lo.id_cliente,
+        ruta: lo.ruta,
+        supervisor: lo.supervisor || '',
+        chofer: lo.chofer || '',
+        observaciones: lo.observaciones || '',
+        fecha: lo.fecha,
+        articulos: lo.articulos || [],
+        total_pedido: Number(lo.total_pedido || 0),
+        monto_pedido: Number(lo.monto_pedido || lo.total_pedido || 0),
+        status: lo.status || 'COMPLETADO',
+        reject_reason: lo.reject_reason || null,
+        status_history: lo.status_history || [],
+        raw_order: lo.raw_order || {},
+        created_at: lo.created_at || `${lo.fecha}T16:00:00.000Z`,
+        updated_at: lo.updated_at || lo.created_at || `${lo.fecha}T16:00:00.000Z`,
+        is_archived: true
+      });
+    }
+  }
+
+  // Eliminar duplicado legado 1793055537757 si existiera
+  await supabase.from('orders').delete().eq('id', '1793055537757');
+
   const BATCH_SIZE = 250;
   let uploaded = 0;
   for (let i = 0; i < rowsToUpsert.length; i += BATCH_SIZE) {
@@ -266,6 +300,7 @@ async function run() {
   const completedCount = rowsToUpsert.filter(r => r.status === 'COMPLETADO').length;
   const rejectedCount = rowsToUpsert.filter(r => r.status === 'RECHAZADO').length;
   console.log(`Carga completada exitosamente: ${uploaded} pedidos históricos (Facturados: ${completedCount}, Rechazados: ${rejectedCount}).`);
+  process.exit(0);
 }
 
 run().catch(err => {

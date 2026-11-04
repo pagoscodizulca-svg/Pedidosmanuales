@@ -72,7 +72,12 @@ export const SeguimientoBlock: React.FC<SeguimientoBlockProps> = ({ orders, hide
     if (dateTo && (ord.fecha || '') > dateTo) return false;
 
     return true;
-  }).sort((a, b) => b.createdAt.localeCompare(a.createdAt)); // Newest first
+  }).sort((a, b) => {
+    const fechaA = a.order?.fecha || '';
+    const fechaB = b.order?.fecha || '';
+    if (fechaA !== fechaB) return fechaB.localeCompare(fechaA);
+    return (b.createdAt || '').localeCompare(a.createdAt || '');
+  }); // Newest first
 
   const countProceso = orders.filter(o => o.status === 'PENDIENTE_FACTURACION' || o.status === 'PENDIENTE_CXC').length;
   const countListos = orders.filter(o => o.status === 'COMPLETADO').length;

@@ -577,6 +577,7 @@ async function getNextCorrelativo(): Promise<string> {
   const { data } = await supabase
     .from('orders')
     .select('numero_pedido, created_at')
+    .or('is_archived.is.false,is_archived.is.null')
     .order('created_at', { ascending: false })
     .limit(100);
 
@@ -585,7 +586,7 @@ async function getNextCorrelativo(): Promise<string> {
     for (const r of data) {
       if (r.numero_pedido && /^\d+$/.test(String(r.numero_pedido).trim())) {
         const n = parseInt(String(r.numero_pedido).trim(), 10);
-        if (!isNaN(n) && n > maxNum) {
+        if (!isNaN(n) && n < 400000 && n > maxNum) {
           maxNum = n;
         }
       }

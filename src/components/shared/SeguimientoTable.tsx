@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DbOrder } from '../../types';
 import { OrderModal } from './OrderModal';
-import { Check, X, Eye } from 'lucide-react';
+import { Check, X, Eye, ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface SeguimientoTableProps {
   orders: DbOrder[];
@@ -10,9 +10,21 @@ interface SeguimientoTableProps {
   onToggleAll?: () => void;
 }
 
+const PAGE_SIZE = 100;
+
 export const SeguimientoTable: React.FC<SeguimientoTableProps> = ({ orders, selectedIds, onToggle, onToggleAll }) => {
   const selectable = !!selectedIds && !!onToggle && !!onToggleAll;
   const [selectedOrder, setSelectedOrder] = useState<DbOrder | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [orders.length]);
+
+  const totalPages = Math.max(1, Math.ceil(orders.length / PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages);
+  const startIndex = (safePage - 1) * PAGE_SIZE;
+  const visibleOrders = orders.slice(startIndex, startIndex + PAGE_SIZE);
 
   const getStepStatus = (order: DbOrder) => {
     const s = order.status;
@@ -164,7 +176,7 @@ export const SeguimientoTable: React.FC<SeguimientoTableProps> = ({ orders, sele
             {orders.length === 0 && (
               <tr><td colSpan={9} className="p-8 text-center text-slate-400">No hay pedidos para mostrar.</td></tr>
             )}
-            {orders.map(order => {
+            {visibleOrders.map(order => {
               const ord = order.order || ({} as any);
               const numPed = String(ord.numero_pedido || '').trim();
               const numPedDisplay = numPed ? numPed.padStart(5, '0') : '-';
@@ -197,6 +209,35 @@ export const SeguimientoTable: React.FC<SeguimientoTableProps> = ({ orders, sele
           </tbody>
         </table>
       </div>
+
+      {orders.length > PAGE_SIZE && (
+        <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-600">
+          <div className="font-semibold">
+            Mostrando <span className="font-bold text-slate-900">{startIndex + 1}</span> – <span className="font-bold text-slate-900">{Math.min(startIndex + PAGE_SIZE, orders.length)}</span> de <span className="font-bold text-slate-900">{orders.length}</span> pedidos
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={safePage <= 1}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 bg-white font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              <ChevronLeft size={14} /> Anterior
+            </button>
+            <span className="px-2 font-bold text-slate-700">
+              Página {safePage} de {totalPages}
+            </span>
+            <button
+              type="button"
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              disabled={safePage >= totalPages}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 bg-white font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              Siguiente <ChevronRight size={14} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {selectedOrder && (
         <OrderModal order={selectedOrder} onClose={() => setSelectedOrder(null)} />
