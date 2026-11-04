@@ -496,8 +496,20 @@ function mapSupabaseToDbOrder(row: any): DbOrder {
       ? row.cliente
       : explicitBranch || row.cliente || rawOrd.cliente || ''
   ).trim();
-  const resolvedRuta = String(row.ruta || rawOrd.ruta || rawOrd.vendedor || rawOrd.vendedora || '').trim();
-  const resolvedVendedor = String(rawOrd.vendedor || row.ruta || rawOrd.ruta || rawOrd.vendedora || '').trim();
+  const explicitVendedorCol = String(
+    row.vendedores || row.vendedor || rawOrd.vendedores || rawOrd.vendedor || rawOrd.vendedora || rawOrd.vendedor_nombre || ''
+  ).trim();
+  const explicitRutasCol = String(
+    row.rutas || row.zona || row.ruta_zona || rawOrd.rutas || rawOrd.zona || rawOrd.ruta_zona || ''
+  ).trim();
+  const rawRutaCol = String(row.ruta || rawOrd.ruta || '').trim();
+  const resolvedVendedor = explicitVendedorCol || rawRutaCol;
+  const resolvedRuta = rawRutaCol || explicitRutasCol || explicitVendedorCol;
+  const resolvedRutasZona =
+    explicitRutasCol ||
+    (explicitVendedorCol && rawRutaCol && explicitVendedorCol.toUpperCase() !== rawRutaCol.toUpperCase()
+      ? rawRutaCol
+      : '');
   const resolvedCadena =
     rawOrd.cadena ||
     rawOrd.origen ||
@@ -523,9 +535,12 @@ function mapSupabaseToDbOrder(row: any): DbOrder {
       direccion_despacho: extractedDir,
       observacion_formateada: obsText,
       vendedor: resolvedVendedor,
+      vendedores: explicitVendedorCol || resolvedVendedor,
       total_renglones: articulos.length,
       id_cliente: row.id_cliente || rawOrd.id_cliente || '',
       ruta: resolvedRuta,
+      rutas: resolvedRutasZona || undefined,
+      zona: resolvedRutasZona || undefined,
       supervisor: row.supervisor || rawOrd.supervisor || '',
       chofer: row.chofer || rawOrd.chofer || '',
       observaciones: obsText,
@@ -632,7 +647,7 @@ function triggerCutoffIfDue() {
 }
 
 // Columnas requeridas para los pedidos activos (incluye sucursal y raw_order para conservar metadatos completos de OC, sucursal y dirección)
-const ACTIVE_ORDERS_COLUMNS = 'id, status, created_at, updated_at, status_history, reject_reason, cxc_note, fact_note, is_archived, cliente, id_cliente, ruta, supervisor, chofer, sucursal, observaciones, fecha, articulos, numero_pedido, total_pedido, monto_pedido, raw_order';
+const ACTIVE_ORDERS_COLUMNS = '*';
 
 // GET todos los pedidos activos (optimizado para respuesta instantánea y sincronización garantizada de Sala de Espera)
 router.get('/', async (req, res) => {

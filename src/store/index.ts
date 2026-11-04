@@ -161,8 +161,20 @@ function mapDirectSupabaseRowToDbOrder(row: any): DbOrder {
       ? row.cliente
       : explicitBranch || row.cliente || rawOrd.cliente || ''
   ).trim();
-  const resolvedRuta = String(row.ruta || rawOrd.ruta || rawOrd.vendedor || rawOrd.vendedora || '').trim();
-  const resolvedVendedor = String(rawOrd.vendedor || row.ruta || rawOrd.ruta || rawOrd.vendedora || '').trim();
+  const explicitVendedorCol = String(
+    row.vendedores || row.vendedor || rawOrd.vendedores || rawOrd.vendedor || rawOrd.vendedora || rawOrd.vendedor_nombre || ''
+  ).trim();
+  const explicitRutasCol = String(
+    row.rutas || row.zona || row.ruta_zona || rawOrd.rutas || rawOrd.zona || rawOrd.ruta_zona || ''
+  ).trim();
+  const rawRutaCol = String(row.ruta || rawOrd.ruta || '').trim();
+  const resolvedVendedor = explicitVendedorCol || rawRutaCol;
+  const resolvedRuta = rawRutaCol || explicitRutasCol || explicitVendedorCol;
+  const resolvedRutasZona =
+    explicitRutasCol ||
+    (explicitVendedorCol && rawRutaCol && explicitVendedorCol.toUpperCase() !== rawRutaCol.toUpperCase()
+      ? rawRutaCol
+      : '');
   const resolvedCadena =
     rawOrd.cadena ||
     rawOrd.origen ||
@@ -188,9 +200,12 @@ function mapDirectSupabaseRowToDbOrder(row: any): DbOrder {
       direccion_despacho: extractedDir,
       observacion_formateada: obsText,
       vendedor: resolvedVendedor,
+      vendedores: explicitVendedorCol || resolvedVendedor,
       total_renglones: articulos.length,
       id_cliente: row.id_cliente || rawOrd.id_cliente || '',
       ruta: resolvedRuta,
+      rutas: resolvedRutasZona || undefined,
+      zona: resolvedRutasZona || undefined,
       supervisor: row.supervisor || rawOrd.supervisor || '',
       chofer: row.chofer || rawOrd.chofer || '',
       observaciones: obsText,

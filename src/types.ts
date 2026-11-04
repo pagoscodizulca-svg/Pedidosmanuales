@@ -17,9 +17,12 @@ export interface OrderData {
   direccion_despacho?: string;
   observacion_formateada?: string;
   vendedor?: string;
+  vendedores?: string;
   total_renglones?: number;
   numero_pedido?: string;
   ruta?: string;
+  rutas?: string;
+  zona?: string;
   supervisor?: string;
   chofer?: string;
   observaciones?: string;
