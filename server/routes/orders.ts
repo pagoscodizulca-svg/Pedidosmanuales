@@ -1,7 +1,13 @@
 import { Router } from 'express';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { createClient } from '@supabase/supabase-js';
 import { DbOrder, OrderStatus } from '../../src/types.js';
 import { parseAndValidateChainOrders, normalizeChainUnit } from '../services/chainOrderParser.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const router = Router();
 const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
@@ -753,40 +759,416 @@ router.post('/sync-alkosto', async (req, res) => {
   }
 });
 
-// GET histórico de pedidos archivados (paginado seguro)
-router.get('/history', async (req, res) => {
+// Fuentes de respaldo histórico de solo lectura (Google Sheets + archivos locales de cierre mensual)
+const HISTORY_SHEET_ID = '10ZgsQCo_bIeoDHPENkUIPtHVNBnZAag2-AaFO6C9cXw';
+const DEFAULT_HISTORY_GIDS = [
+  '2109721203', '1931086704', '792036140', '877239853', '238739897',
+  '2130133439', '1314022048', '1960659635', '1020397937', '2068143851',
+  '875764522', '766844516', '1079374179', '895880905', '1136326469'
+];
+const HISTORY_CACHE_TTL_MS = 15 * 60 * 1000;
+const SUPABASE_HISTORY_CACHE_TTL_MS = 60 * 1000;
+let cachedArchiveHistoryOrders: DbOrder[] | null = null;
+let cachedArchiveHistoryCutoff = '';
+let lastArchiveHistoryFetch = 0;
+let archiveLoadInFlight: Promise<DbOrder[]> | null = null;
+let cachedSupabaseHistoryOrders: DbOrder[] | null = null;
+let lastSupabaseHistoryFetch = 0;
+
+function resolveServerDataPath(fileName: string): string | null {
+  const candidates = [
+    path.resolve(__dirname, '../data', fileName),
+    path.resolve(process.cwd(), 'server', 'data', fileName)
+  ];
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) return p;
+    } catch {}
+  }
+  return null;
+}
+
+function parseHistoryCsvLine(line: string): string[] {
+  const result: string[] = [];
+  let inQuotes = false;
+  let curr = '';
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+    } else if (ch === ',' && !inQuotes) {
+      result.push(curr);
+      curr = '';
+    } else {
+      curr += ch;
+    }
+  }
+  result.push(curr);
+  return result;
+}
+
+function standardizeHistoryDate(raw: unknown): string | null {
+  if (!raw) return null;
+  const d = String(raw).replace(/"/g, '').trim();
+  if (!d) return null;
+  if (d.includes('/')) {
+    const parts = d.split('/');
+    if (parts.length === 3 && parts[0].length <= 2 && parts[2].length === 4) {
+      return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+    }
+  }
+  if (/^\d{4}-\d{2}-\d{2}/.test(d)) {
+    return d.slice(0, 10);
+  }
+  return null;
+}
+
+async function fetchSheetTextWithTimeout(url: string, timeoutMs = 8000): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    let allData: any[] = [];
-    let page = 0;
-    const limit = 1000;
-    let hasMore = true;
-    
-    while(hasMore) {
-      const { data, error } = await supabase
-        .from('orders')
-        .select('*')
-        .is('is_archived', true)
-        .order('created_at', { ascending: false })
-        .range(page * limit, (page + 1) * limit - 1);
-        
-      if (error) throw error;
-      
-      if (data && data.length > 0) {
-        allData = allData.concat(data);
-        page++;
-        if (data.length < limit) hasMore = false;
-      } else {
-        hasMore = false;
+    const res = await fetch(url, { redirect: 'follow', signal: controller.signal });
+    if (!res.ok) return '';
+    return await res.text();
+  } catch {
+    return '';
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function loadReadOnlyHistoricalArchiveOrders(firstDayDateStr: string): Promise<DbOrder[]> {
+  const now = Date.now();
+  if (
+    cachedArchiveHistoryOrders &&
+    cachedArchiveHistoryCutoff === firstDayDateStr &&
+    now - lastArchiveHistoryFetch < HISTORY_CACHE_TTL_MS
+  ) {
+    return cachedArchiveHistoryOrders;
+  }
+
+  if (archiveLoadInFlight) {
+    return archiveLoadInFlight;
+  }
+
+  archiveLoadInFlight = (async (): Promise<DbOrder[]> => {
+    try {
+      let allCsvLines: string[] = [];
+
+      // 1. Leer respaldo CSV local (server/data/sheet.csv)
+      const localSheetPath = resolveServerDataPath('sheet.csv');
+      if (localSheetPath) {
+        try {
+          const localCsv = fs.readFileSync(localSheetPath, 'utf8');
+          const lines = localCsv.split(/\r?\n/).filter(l => l.trim() !== '');
+          if (lines.length > 0 && lines[0].toUpperCase().includes('ID PEDIDO')) {
+            lines.shift();
+          }
+          allCsvLines = allCsvLines.concat(lines);
+        } catch (csvErr) {
+          console.warn('Warning reading local sheet.csv for history:', csvErr);
+        }
+      }
+
+      // 2. Descargar pestañas CSV históricas de Google Sheets inmediatamente en paralelo (solo lectura GET)
+      const sheetResults = await Promise.allSettled(
+        DEFAULT_HISTORY_GIDS.map(gid =>
+          fetchSheetTextWithTimeout(
+            `https://docs.google.com/spreadsheets/d/${HISTORY_SHEET_ID}/export?format=csv&gid=${gid}`,
+            8000
+          )
+        )
+      );
+
+      for (const res of sheetResults) {
+        if (res.status === 'fulfilled' && res.value) {
+          const lines = res.value.split(/\r?\n/).filter(l => l.trim() !== '');
+          if (lines.length === 0 || !lines[0].toUpperCase().includes('ID PEDIDO')) continue;
+          lines.shift();
+          allCsvLines = allCsvLines.concat(lines);
+        }
+      }
+
+      const ordersMap = new Map<string, any>();
+
+      for (const line of allCsvLines) {
+        const cols = parseHistoryCsvLine(line.trim());
+        if (cols.length < 13) continue;
+
+        const id = (cols[0] || '').replace(/"/g, '').trim();
+        if (!id || id.toUpperCase() === 'ID PEDIDO' || id === '1793055537757') continue;
+
+        const fecha = standardizeHistoryDate(cols[1]);
+        if (!fecha || fecha >= firstDayDateStr) continue;
+
+        const rawStatus = (cols[14] || '').replace(/"/g, '').trim().toUpperCase();
+        const rawReason = (cols[15] || '').replace(/"/g, '').trim();
+        const isRejected =
+          rawStatus.includes('RECHAZAD') ||
+          rawStatus.includes('NO FACTURAD') ||
+          rawStatus.includes('ANULAD');
+
+        if (!ordersMap.has(id)) {
+          const cliente = (cols[2] || '').replace(/"/g, '').trim();
+          const id_cliente = (cols[3] || '').replace(/"/g, '').trim();
+          const ruta = (cols[4] || '').replace(/"/g, '').trim();
+          const supervisor = (cols[5] || '').replace(/"/g, '').trim();
+          const chofer = (cols[6] || '').replace(/"/g, '').trim();
+          const observaciones = (cols[7] || '').replace(/"/g, '').trim();
+          const declaredTotal = Number((cols[13] || '').replace(/"/g, '').trim() || 0) || 0;
+
+          ordersMap.set(id, {
+            id,
+            cliente,
+            id_cliente,
+            ruta,
+            supervisor,
+            chofer,
+            observaciones,
+            fecha,
+            articulos: [] as any[],
+            seenArticles: new Set<string>(),
+            numero_pedido: id.slice(-5),
+            declaredTotal,
+            status: isRejected ? 'RECHAZADO' : 'COMPLETADO',
+            reject_reason: isRejected ? (rawReason || 'Rechazado en meses anteriores') : null
+          });
+        } else if (isRejected) {
+          const existing = ordersMap.get(id);
+          existing.status = 'RECHAZADO';
+          existing.reject_reason = rawReason || existing.reject_reason || 'Rechazado en meses anteriores';
+        }
+
+        const qty = Number((cols[8] || '').replace(/"/g, '').trim() || 0);
+        const unidad = (cols[9] || '').replace(/"/g, '').trim() || 'UNI';
+        const desc = (cols[10] || '').replace(/"/g, '').trim();
+        const precio = Number((cols[11] || '').replace(/"/g, '').trim() || 0) || 0;
+        const rawSub = Number((cols[12] || '').replace(/"/g, '').trim() || 0) || 0;
+        const subTotal = qty > 0 && precio > 0 ? Number((qty * precio).toFixed(2)) : Number(rawSub.toFixed(2));
+
+        if (qty > 0 && desc) {
+          const ord = ordersMap.get(id);
+          const artKey = `${desc}|${qty}|${precio}|${subTotal}`;
+          if (!ord.seenArticles.has(artKey)) {
+            ord.seenArticles.add(artKey);
+            ord.articulos.push({
+              codigo: '',
+              cantidad_solicitada: qty,
+              unidad_medida: unidad,
+              descripcion: desc,
+              precio_unitario: precio,
+              sub_total: subTotal
+            });
+          }
+        }
+      }
+
+      const rowMap = new Map<string, any>();
+
+      for (const o of ordersMap.values()) {
+        const sumArticulos = Number(
+          o.articulos.reduce((acc: number, a: any) => acc + (Number(a.sub_total) || 0), 0).toFixed(2)
+        );
+        const finalTotal = o.declaredTotal > 0 ? Number(o.declaredTotal.toFixed(2)) : sumArticulos;
+        const createdIso = `${o.fecha}T12:00:00.000Z`;
+        const statusHistory =
+          o.status === 'RECHAZADO'
+            ? [
+                {
+                  status: 'RECHAZADO',
+                  department: 'Sistema',
+                  changedBy: 'Admin',
+                  timestamp: createdIso,
+                  reason: o.reject_reason || 'Rechazado en meses anteriores',
+                  note: o.reject_reason || 'Rechazado en meses anteriores'
+                }
+              ]
+            : [
+                {
+                  status: 'COMPLETADO',
+                  department: 'Facturación',
+                  changedBy: 'Sistema',
+                  timestamp: createdIso,
+                  reason: 'Pedido histórico facturado'
+                }
+              ];
+
+        rowMap.set(o.id, {
+          id: o.id,
+          numero_pedido: o.numero_pedido,
+          cliente: o.cliente,
+          id_cliente: o.id_cliente,
+          ruta: o.ruta,
+          supervisor: o.supervisor,
+          chofer: o.chofer,
+          observaciones: o.observaciones,
+          fecha: o.fecha,
+          articulos: o.articulos,
+          total_pedido: finalTotal,
+          monto_pedido: finalTotal,
+          status: o.status,
+          reject_reason: o.reject_reason,
+          status_history: statusHistory,
+          raw_order: {
+            id_cliente: o.id_cliente,
+            cliente: o.cliente,
+            vendedor: o.ruta,
+            vendedores: o.ruta,
+            ruta: o.ruta,
+            supervisor: o.supervisor,
+            chofer: o.chofer,
+            observaciones: o.observaciones,
+            fecha: o.fecha,
+            numero_pedido: o.numero_pedido,
+            total_pedido: finalTotal,
+            monto_pedido: finalTotal,
+            total_renglones: o.articulos.length,
+            articulos: o.articulos
+          },
+          created_at: createdIso,
+          updated_at: createdIso,
+          is_archived: true
+        });
+      }
+
+      // 3. Leer respaldo JSON de cierre de Octubre (server/data/octubre_ultima_semana_2026.json)
+      const lateOctPath = resolveServerDataPath('octubre_ultima_semana_2026.json');
+      if (lateOctPath) {
+        try {
+          const lateOctOrders = JSON.parse(fs.readFileSync(lateOctPath, 'utf8'));
+          if (Array.isArray(lateOctOrders)) {
+            for (const lo of lateOctOrders) {
+              if (!lo || !lo.id) continue;
+              const normFecha = standardizeHistoryDate(lo.fecha || lo.raw_order?.fecha);
+              if (!normFecha || normFecha >= firstDayDateStr) continue;
+              rowMap.set(String(lo.id), {
+                ...lo,
+                id: String(lo.id),
+                fecha: normFecha,
+                status: lo.status || 'COMPLETADO',
+                created_at: lo.created_at || `${normFecha}T16:00:00.000Z`,
+                updated_at: lo.updated_at || lo.created_at || `${normFecha}T16:00:00.000Z`,
+                is_archived: true
+              });
+            }
+          }
+        } catch (octErr) {
+          console.warn('Warning reading octubre_ultima_semana_2026.json for history:', octErr);
+        }
+      }
+
+      const mappedOrders = Array.from(rowMap.values())
+        .filter(row => !isTestOrGhostOrder(row))
+        .map(row => {
+          const o = mapSupabaseToDbOrder(row);
+          o.isArchived = true;
+          return o;
+        })
+        .filter(o => o.status !== 'POR_VALIDAR' && o.status !== 'ERROR_FORMATO');
+
+      if (mappedOrders.length > 0) {
+        cachedArchiveHistoryOrders = mappedOrders;
+        cachedArchiveHistoryCutoff = firstDayDateStr;
+        lastArchiveHistoryFetch = Date.now();
+      }
+      return mappedOrders;
+    } catch (err) {
+      console.error('Error loading read-only historical archive orders:', err);
+      return cachedArchiveHistoryOrders || [];
+    } finally {
+      archiveLoadInFlight = null;
+    }
+  })();
+
+  return archiveLoadInFlight;
+}
+
+// Pre-cargar caché de historial en segundo plano al iniciar el servidor (solo lectura)
+setTimeout(() => {
+  const now = new Date();
+  const firstDayDateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+  loadReadOnlyHistoricalArchiveOrders(firstDayDateStr).catch(() => {});
+}, 100);
+
+// GET histórico de pedidos archivados y de meses anteriores (estrictamente SOLO LECTURA)
+router.get('/history', async (_req, res) => {
+  try {
+    const now = new Date();
+    const firstDayDateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+    const firstDayIsoStr = new Date(Date.UTC(now.getFullYear(), now.getMonth(), 1, 0, 0, 0)).toISOString();
+
+    const fetchSupabaseHistoryOrders = async (): Promise<DbOrder[]> => {
+      const nowMs = Date.now();
+      if (cachedSupabaseHistoryOrders && nowMs - lastSupabaseHistoryFetch < SUPABASE_HISTORY_CACHE_TTL_MS) {
+        return cachedSupabaseHistoryOrders;
+      }
+
+      let allData: any[] = [];
+      let page = 0;
+      const limit = 1000;
+      let hasMore = true;
+
+      while (hasMore) {
+        const { data, error } = await supabase
+          .from('orders')
+          .select('*')
+          .or(`is_archived.eq.true,fecha.lt.${firstDayDateStr},created_at.lt.${firstDayIsoStr}`)
+          .order('created_at', { ascending: false })
+          .range(page * limit, (page + 1) * limit - 1);
+
+        if (error) throw error;
+
+        if (data && data.length > 0) {
+          allData = allData.concat(data);
+          page++;
+          if (data.length < limit) hasMore = false;
+        } else {
+          hasMore = false;
+        }
+      }
+
+      const mapped = allData
+        .filter(row => row && row.id && !isTestOrGhostOrder(row))
+        .map(row => {
+          const o = mapSupabaseToDbOrder(row);
+          o.isArchived = true;
+          return o;
+        })
+        .filter(o => o.status !== 'POR_VALIDAR' && o.status !== 'ERROR_FORMATO');
+
+      cachedSupabaseHistoryOrders = mapped;
+      lastSupabaseHistoryFetch = Date.now();
+      return mapped;
+    };
+
+    const [supabaseOrdersResult, archiveOrdersResult] = await Promise.allSettled([
+      fetchSupabaseHistoryOrders(),
+      loadReadOnlyHistoricalArchiveOrders(firstDayDateStr)
+    ]);
+
+    const mergedById = new Map<string, DbOrder>();
+
+    if (archiveOrdersResult.status === 'fulfilled' && Array.isArray(archiveOrdersResult.value)) {
+      for (const ord of archiveOrdersResult.value) {
+        if (ord && ord.id) mergedById.set(String(ord.id), ord);
       }
     }
-    
-    const orders = allData
-      .filter(row => !isTestOrGhostOrder(row))
-      .map(row => {
-        const o = mapSupabaseToDbOrder(row);
-        o.isArchived = true;
-        return o;
-      });
+
+    if (supabaseOrdersResult.status === 'fulfilled' && Array.isArray(supabaseOrdersResult.value)) {
+      for (const ord of supabaseOrdersResult.value) {
+        if (ord && ord.id) mergedById.set(String(ord.id), ord);
+      }
+    } else if (supabaseOrdersResult.status === 'rejected') {
+      console.error('Warning querying Supabase orders for history:', supabaseOrdersResult.reason);
+    }
+
+    const orders = Array.from(mergedById.values()).sort((a, b) => {
+      const fechaA = a.order?.fecha || '';
+      const fechaB = b.order?.fecha || '';
+      if (fechaA !== fechaB) return fechaB.localeCompare(fechaA);
+      return (b.createdAt || '').localeCompare(a.createdAt || '');
+    });
+
     res.json(orders);
   } catch (err: any) {
     console.error('Error fetching history:', err);

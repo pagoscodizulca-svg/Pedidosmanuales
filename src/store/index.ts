@@ -404,6 +404,38 @@ function dedupeAndFilterOrders(list: DbOrder[]): DbOrder[] {
   return result;
 }
 
+function dedupeAndFilterHistoryOrders(list: DbOrder[]): DbOrder[] {
+  const seen = new Set<string>();
+  const result: DbOrder[] = [];
+  for (const item of list || []) {
+    if (!item || !item.id || isGhostTestOrder(item)) continue;
+    const idStr = String(item.id);
+    if (seen.has(idStr)) continue;
+    seen.add(idStr);
+    const normalized = normalizeExternalChainOrder(item);
+    if (normalized.status === 'POR_VALIDAR' || normalized.status === 'ERROR_FORMATO') continue;
+    result.push({
+      ...normalized,
+      id: idStr,
+      isArchived: true,
+      statusHistory: Array.isArray(normalized.statusHistory) ? normalized.statusHistory : [],
+      order: {
+        ...normalized.order,
+        cliente: String(normalized.order?.cliente || ''),
+        id_cliente: String(normalized.order?.id_cliente || ''),
+        ruta: String(normalized.order?.ruta || normalized.order?.vendedor || ''),
+        vendedor: String(normalized.order?.vendedor || normalized.order?.ruta || ''),
+        numero_pedido: String(normalized.order?.numero_pedido || idStr.slice(-5)),
+        fecha: String(normalized.order?.fecha || ''),
+        articulos: Array.isArray(normalized.order?.articulos) ? normalized.order.articulos : [],
+        total_pedido: Number(normalized.order?.total_pedido ?? normalized.order?.monto_pedido ?? 0) || 0,
+        monto_pedido: Number(normalized.order?.monto_pedido ?? normalized.order?.total_pedido ?? 0) || 0
+      }
+    });
+  }
+  return result;
+}
+
 export const useAppStore = create<AppState>((set, get) => ({
   orders: [],
   historyOrders: [],
@@ -419,13 +451,17 @@ export const useAppStore = create<AppState>((set, get) => ({
         if (response.ok) {
           const data = await response.json();
           if (Array.isArray(data) && data.length > 0) {
-            set({ historyOrders: dedupeAndFilterOrders(data), loading: false, error: null });
+            set({ historyOrders: dedupeAndFilterHistoryOrders(data), loading: false, error: null });
             return;
           }
         }
-      } catch {
-        // Si el backend está reiniciando o no responde, continuamos con el fallback directo a Supabase
+      } catch (apiErr) {
+        console.warn('Fallback directo a lectura de historial tras fallo de /api/orders/history:', apiErr);
       }
+
+      const now = new Date();
+      const firstDayDateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+      const firstDayIsoStr = new Date(Date.UTC(now.getFullYear(), now.getMonth(), 1, 0, 0, 0)).toISOString();
 
       let allArchivedRows: any[] = [];
       let page = 0;
@@ -436,7 +472,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         const { data: pageRows, error: fbError } = await supabase
           .from('orders')
           .select('*')
-          .eq('is_archived', true)
+          .or(`is_archived.eq.true,fecha.lt.${firstDayDateStr},created_at.lt.${firstDayIsoStr}`)
           .order('created_at', { ascending: false })
           .range(page * limit, (page + 1) * limit - 1);
 
@@ -456,9 +492,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         mapped.isArchived = true;
         return mapped;
       });
-      set({ historyOrders: dedupeAndFilterOrders(mappedHistory), loading: false, error: null });
+      set({ historyOrders: dedupeAndFilterHistoryOrders(mappedHistory), loading: false, error: null });
     } catch (err: any) {
-      set({ error: err.message, loading: false });
+      console.error('Error al sincronizar el historial de pedidos:', err);
+      set({ error: err?.message || 'Error al cargar el historial', loading: false });
     }
   },
 
