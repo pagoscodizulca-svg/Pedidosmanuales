@@ -1,16 +1,17 @@
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import Layout from './components/layout/Layout.js';
-import Ventas from './pages/Ventas.js';
-import { CXC } from './pages/CXC.js';
-import { Facturacion } from './pages/Facturacion.js';
-import { Auditoria } from './pages/Auditoria.js';
-import { Historial } from './pages/Historial.js';
 import { Login } from './pages/Login.js';
 import { useAuthStore } from './store/auth.js';
 import { useAppStore } from './store/index.js';
 import { supabase } from './lib/supabase.js';
 import { Bell } from 'lucide-react';
+
+const Ventas = lazy(() => import('./pages/Ventas.js'));
+const CXC = lazy(() => import('./pages/CXC.js').then(m => ({ default: m.CXC })));
+const Facturacion = lazy(() => import('./pages/Facturacion.js').then(m => ({ default: m.Facturacion })));
+const Auditoria = lazy(() => import('./pages/Auditoria.js').then(m => ({ default: m.Auditoria })));
+const Historial = lazy(() => import('./pages/Historial.js').then(m => ({ default: m.Historial })));
 
 // Custom Toast Component
 const Toast = ({ message, visible }: { message: string, visible: boolean }) => (
@@ -24,7 +25,7 @@ const Toast = ({ message, visible }: { message: string, visible: boolean }) => (
 
 function App() {
   const { user } = useAuthStore();
-  const { fetchOrders } = useAppStore();
+  const { fetchOrders, subscribeToWaitingRoomRealtime } = useAppStore();
   const [toastMsg, setToastMsg] = useState('');
   const [toastVisible, setToastVisible] = useState(false);
   const toastTimeoutRef = React.useRef<any>(null);
@@ -39,18 +40,25 @@ function App() {
   useEffect(() => {
     if (!user) return;
 
+    const unsubscribeStoreRealtime = subscribeToWaitingRoomRealtime();
+
     let fetchTimer: any = null;
     const debouncedFetchOrders = () => {
       if (fetchTimer) clearTimeout(fetchTimer);
       fetchTimer = setTimeout(() => {
         fetchOrders();
-      }, 300);
+      }, 600);
     };
 
-    // Supabase Realtime Subscription (Escuchar INSERTS y UPDATES en tiempo real)
+    // Supabase Realtime Subscription (Notificaciones de pedidos activos del mes en curso)
     const channel = supabase.channel('realtime_orders')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (payload: any) => {
          const row = payload.new || {};
+         // Ignorar eventos sobre pedidos históricos / archivados
+         if (row.is_archived === true || payload.old?.is_archived === true) {
+           return;
+         }
+
          const rowId = String(row.id || '').trim().toLowerCase();
          const rowNum = String(row.numero_pedido || row.raw_order?.numero_pedido || '').trim();
          const rowObs = String(row.observaciones || row.raw_order?.observaciones || '').toUpperCase();
@@ -75,7 +83,6 @@ function App() {
            } else {
              showToast(`Nuevo pedido recibido en Sala de Espera: ${cliente}`);
            }
-           debouncedFetchOrders();
          } else if (payload.eventType === 'UPDATE') {
            const newStatus = payload.new?.status;
            const oldStatus = payload.old?.status;
@@ -89,19 +96,17 @@ function App() {
                newStatus === 'RECHAZADO' ? 'Rechazado' : newStatus;
              showToast(`El pedido #${orderNum} pasó a ${labelStatus}`);
            }
-           debouncedFetchOrders();
-         } else {
-           debouncedFetchOrders();
          }
       })
       .subscribe();
 
     return () => {
+      unsubscribeStoreRealtime();
       if (fetchTimer) clearTimeout(fetchTimer);
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
       supabase.removeChannel(channel);
     };
-  }, [user, fetchOrders]);
+  }, [user, fetchOrders, subscribeToWaitingRoomRealtime]);
 
   if (!user) {
     return <Login />;
@@ -111,14 +116,16 @@ function App() {
     <>
       <Toast message={toastMsg} visible={toastVisible} />
       <Layout>
-        <Routes>
-          <Route path="/" element={<Ventas />} />
-          <Route path="/cxc" element={<CXC />} />
-          <Route path="/facturacion" element={<Facturacion />} />
-          <Route path="/auditoria" element={<Auditoria />} />
-          <Route path="/historial" element={<Historial />} />
-          <Route path="*" element={<Ventas />} />
-        </Routes>
+        <Suspense fallback={null}>
+          <Routes>
+            <Route path="/" element={<Ventas />} />
+            <Route path="/cxc" element={<CXC />} />
+            <Route path="/facturacion" element={<Facturacion />} />
+            <Route path="/auditoria" element={<Auditoria />} />
+            <Route path="/historial" element={<Historial />} />
+            <Route path="*" element={<Ventas />} />
+          </Routes>
+        </Suspense>
       </Layout>
     </>
   );

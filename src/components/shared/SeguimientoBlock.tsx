@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { SeguimientoTable } from './SeguimientoTable';
 import { Printer } from 'lucide-react';
 import { DbOrder } from '../../types';
@@ -11,102 +11,146 @@ interface SeguimientoBlockProps {
   hideTitle?: boolean;
 }
 
+const isWaitingRoomOrder = (o: DbOrder) => {
+  const st = String(o.status || '').trim().toUpperCase();
+  return (
+    st === 'POR_VALIDAR' ||
+    st === 'POR VALIDAR' ||
+    st === 'ERROR_FORMATO' ||
+    st === 'PENDIENTE' ||
+    st === 'EN_ESPERA' ||
+    st === 'EN ESPERA' ||
+    st === 'ENVIADO'
+  );
+};
+
 export const SeguimientoBlock: React.FC<SeguimientoBlockProps> = ({ orders, hideTitle }) => {
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
   const [correlativoTerm, setCorrelativoTerm] = useState('');
+  const [debouncedCorrelativoTerm, setDebouncedCorrelativoTerm] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [sellerTerm, setSellerTerm] = useState('');
   const [activeFilterTab, setActiveFilterTab] = useState<'TODOS' | 'PROCESO' | 'LISTOS' | 'RECHAZADOS'>('TODOS');
+
+  useEffect(() => {
+    if (!searchTerm) {
+      setDebouncedSearchTerm('');
+      return;
+    }
+    const timer = setTimeout(() => setDebouncedSearchTerm(searchTerm), 250);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
+  useEffect(() => {
+    if (!correlativoTerm) {
+      setDebouncedCorrelativoTerm('');
+      return;
+    }
+    const timer = setTimeout(() => setDebouncedCorrelativoTerm(correlativoTerm), 250);
+    return () => clearTimeout(timer);
+  }, [correlativoTerm]);
 
   const vendedorOptions = useMemo(
     () => buildGroupedVendedorOptions(orders, Object.keys(VENDEDORES)),
     [orders],
   );
 
-  const isWaitingRoomOrder = (o: DbOrder) => {
-    const st = String(o.status || '').trim().toUpperCase();
-    return (
-      st === 'POR_VALIDAR' ||
-      st === 'POR VALIDAR' ||
-      st === 'ERROR_FORMATO' ||
-      st === 'PENDIENTE' ||
-      st === 'EN_ESPERA' ||
-      st === 'EN ESPERA' ||
-      st === 'ENVIADO'
-    );
-  };
-
-  const filteredOrders = orders.filter(o => {
-    if (isWaitingRoomOrder(o)) return false;
-    // Tab Filter
-    if (activeFilterTab === 'PROCESO' && o.status !== 'PENDIENTE_FACTURACION' && o.status !== 'PENDIENTE_CXC') return false;
-    if (activeFilterTab === 'LISTOS' && o.status !== 'COMPLETADO') return false;
-    if (activeFilterTab === 'RECHAZADOS' && o.status !== 'RECHAZADO') return false;
-
-    const ord = o.order || ({} as any);
-
-    // Search Term (Cliente o ID)
-    if (searchTerm) {
-      const q = searchTerm.toLowerCase();
-      const matchClient = String(ord.cliente || '').toLowerCase().includes(q);
-      const matchId = String(ord.id_cliente || '').toLowerCase().includes(q);
-      if (!matchClient && !matchId) return false;
+  const { countProceso, countListos, countRechazados, countTodos } = useMemo(() => {
+    let proceso = 0;
+    let listos = 0;
+    let rechazados = 0;
+    let todos = 0;
+    for (const o of orders) {
+      if (!isWaitingRoomOrder(o)) todos++;
+      if (o.status === 'PENDIENTE_FACTURACION' || o.status === 'PENDIENTE_CXC') proceso++;
+      else if (o.status === 'COMPLETADO') listos++;
+      else if (o.status === 'RECHAZADO') rechazados++;
     }
+    return {
+      countProceso: proceso,
+      countListos: listos,
+      countRechazados: rechazados,
+      countTodos: todos,
+    };
+  }, [orders]);
 
-    // Correlativo(s)
-    if (correlativoTerm) {
-      const terms = correlativoTerm.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
-      const numPed = String(ord.numero_pedido || '').toLowerCase();
-      const matchNum = terms.some(t => numPed.includes(t));
-      if (!matchNum) return false;
-    }
+  const filteredOrders = useMemo(() => {
+    const q = debouncedSearchTerm.trim().toLowerCase();
+    const corrTerms = debouncedCorrelativoTerm
+      ? debouncedCorrelativoTerm.split(',').map(t => t.trim().toLowerCase()).filter(Boolean)
+      : [];
 
-    // Seller (coincidencia inteligente bidireccional sobre columna `ruta` / `vendedor`)
-    if (sellerTerm) {
-      if (!matchVendedor(ord.ruta || ord.vendedor, sellerTerm)) return false;
-    }
+    return orders
+      .filter(o => {
+        if (isWaitingRoomOrder(o)) return false;
+        // Tab Filter
+        if (activeFilterTab === 'PROCESO' && o.status !== 'PENDIENTE_FACTURACION' && o.status !== 'PENDIENTE_CXC') return false;
+        if (activeFilterTab === 'LISTOS' && o.status !== 'COMPLETADO') return false;
+        if (activeFilterTab === 'RECHAZADOS' && o.status !== 'RECHAZADO') return false;
 
-    // Dates
-    if (dateFrom && (ord.fecha || '') < dateFrom) return false;
-    if (dateTo && (ord.fecha || '') > dateTo) return false;
+        const ord = o.order || ({} as any);
 
-    return true;
-  }).sort((a, b) => {
-    const fechaA = a.order?.fecha || '';
-    const fechaB = b.order?.fecha || '';
-    if (fechaA !== fechaB) return fechaB.localeCompare(fechaA);
-    return (b.createdAt || '').localeCompare(a.createdAt || '');
-  }); // Newest first
+        // Search Term (Cliente o ID)
+        if (q) {
+          const matchClient = String(ord.cliente || '').toLowerCase().includes(q);
+          const matchId = String(ord.id_cliente || '').toLowerCase().includes(q);
+          if (!matchClient && !matchId) return false;
+        }
 
-  const countProceso = orders.filter(o => o.status === 'PENDIENTE_FACTURACION' || o.status === 'PENDIENTE_CXC').length;
-  const countListos = orders.filter(o => o.status === 'COMPLETADO').length;
-  const countRechazados = orders.filter(o => o.status === 'RECHAZADO').length;
-  const countTodos = orders.filter(o => !isWaitingRoomOrder(o)).length;
+        // Correlativo(s)
+        if (corrTerms.length > 0) {
+          const numPed = String(ord.numero_pedido || '').toLowerCase();
+          const matchNum = corrTerms.some(t => numPed.includes(t));
+          if (!matchNum) return false;
+        }
+
+        // Seller (coincidencia inteligente bidireccional sobre columna `ruta` / `vendedor`)
+        if (sellerTerm) {
+          if (!matchVendedor(ord.ruta || ord.vendedor, sellerTerm)) return false;
+        }
+
+        // Dates
+        if (dateFrom && (ord.fecha || '') < dateFrom) return false;
+        if (dateTo && (ord.fecha || '') > dateTo) return false;
+
+        return true;
+      })
+      .sort((a, b) => {
+        const fechaA = a.order?.fecha || '';
+        const fechaB = b.order?.fecha || '';
+        if (fechaA !== fechaB) return fechaB.localeCompare(fechaA);
+        return (b.createdAt || '').localeCompare(a.createdAt || '');
+      }); // Newest first
+  }, [orders, activeFilterTab, debouncedSearchTerm, debouncedCorrelativoTerm, sellerTerm, dateFrom, dateTo]);
 
   // ---- Selección para imprimir ----
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   // Solo se imprimen los seleccionados que siguen visibles con los filtros actuales
-  const selectedOrders = filteredOrders.filter(o => selectedIds.has(o.id));
+  const selectedOrders = useMemo(
+    () => filteredOrders.filter(o => selectedIds.has(o.id)),
+    [filteredOrders, selectedIds]
+  );
   const selectedCount = selectedOrders.length;
 
-  const toggleSelection = (id: string) => {
+  const toggleSelection = useCallback((id: string) => {
     setSelectedIds(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
-  };
+  }, []);
 
-  const toggleAll = () => {
-    const allSelected = filteredOrders.length > 0 && filteredOrders.every(o => selectedIds.has(o.id));
+  const toggleAll = useCallback(() => {
     setSelectedIds(prev => {
+      const allSelected = filteredOrders.length > 0 && filteredOrders.every(o => prev.has(o.id));
       const next = new Set(prev);
       filteredOrders.forEach(o => (allSelected ? next.delete(o.id) : next.add(o.id)));
       return next;
     });
-  };
+  }, [filteredOrders]);
 
   const handlePrintSelected = () => {
     if (selectedOrders.length > 0) printMultipleOrders(selectedOrders, true);

@@ -174,33 +174,56 @@ const cellInput =
   'w-full h-full bg-transparent px-1.5 py-1 text-[13px] focus:outline-none focus:bg-cyan-50';
 const labelCls = 'text-[10px] font-bold text-slate-600 uppercase whitespace-nowrap';
 
+let cachedRemoteProducts: Producto[] | null = null;
+let inFlightProductsPromise: Promise<Producto[] | null> | null = null;
+
 export const PlanillaForm: React.FC<PlanillaFormProps> = ({ value, onChange, nextNumero }) => {
-  const [catalogProducts, setCatalogProducts] = useState<Producto[]>(PRODUCTOS);
+  const [catalogProducts, setCatalogProducts] = useState<Producto[]>(cachedRemoteProducts || PRODUCTOS);
 
   useEffect(() => {
+    if (cachedRemoteProducts) {
+      setCatalogProducts(cachedRemoteProducts);
+      return;
+    }
     let active = true;
-    supabase
-      .from('productos')
-      .select('id_articulo, descripcion')
-      .then(({ data, error }) => {
-        if (!active || error || !Array.isArray(data) || data.length === 0) return;
-        const remoteItems: Producto[] = data
-          .map((r: any) => {
-            const rawId = String(r.id_articulo || r.id || '').trim();
-            const desc = String(r.descripcion || '').trim().replace(/\s+/g, ' ');
-            const isNum = /^\d+$/.test(rawId);
-            return {
-              id: isNum ? rawId.padStart(6, '0') : rawId.toUpperCase(),
-              descripcion: desc,
-            };
-          })
-          .filter((p) => p.id && p.descripcion)
-          .sort((a, b) => a.id.localeCompare(b.id));
-        if (remoteItems.length > 0) {
-          registerCatalogProducts(remoteItems);
+    if (!inFlightProductsPromise) {
+      inFlightProductsPromise = (async () => {
+        try {
+          const { data, error } = await supabase
+            .from('productos')
+            .select('id_articulo, descripcion');
+          if (error || !Array.isArray(data) || data.length === 0) return null;
+          const remoteItems: Producto[] = data
+            .map((r: any) => {
+              const rawId = String(r.id_articulo || r.id || '').trim();
+              const desc = String(r.descripcion || '').trim().replace(/\s+/g, ' ');
+              const isNum = /^\d+$/.test(rawId);
+              return {
+                id: isNum ? rawId.padStart(6, '0') : rawId.toUpperCase(),
+                descripcion: desc,
+              };
+            })
+            .filter((p) => p.id && p.descripcion)
+            .sort((a, b) => a.id.localeCompare(b.id));
+          if (remoteItems.length > 0) {
+            registerCatalogProducts(remoteItems);
+            cachedRemoteProducts = remoteItems;
+            return remoteItems;
+          }
+          return null;
+        } finally {
+          inFlightProductsPromise = null;
+        }
+      })();
+    }
+    const promise = inFlightProductsPromise;
+    if (promise) {
+      promise.then((remoteItems) => {
+        if (active && remoteItems && remoteItems.length > 0) {
           setCatalogProducts(remoteItems);
         }
       });
+    }
     return () => {
       active = false;
     };

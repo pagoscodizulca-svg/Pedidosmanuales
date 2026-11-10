@@ -72,23 +72,29 @@ export const Ventas: React.FC = () => {
     fetchOrders();
   }, [fetchOrders]);
 
-  // Guardado automático continuo del borrador en localStorage
+  // Guardado automático continuo del borrador en localStorage (con debounce de 400ms para no bloquear el teclado)
   useEffect(() => {
-    if (draft) {
-      localStorage.setItem('codizulca_ventas_draft_v1', JSON.stringify(draft));
-    } else {
+    if (!draft) {
       localStorage.removeItem('codizulca_ventas_draft_v1');
       setHasRestoredDraft(false);
+      return;
     }
+    const timer = setTimeout(() => {
+      localStorage.setItem('codizulca_ventas_draft_v1', JSON.stringify(draft));
+    }, 400);
+    return () => clearTimeout(timer);
   }, [draft]);
 
-  // Guardado automático del texto de WhatsApp en localStorage
+  // Guardado automático del texto de WhatsApp en localStorage (con debounce de 400ms)
   useEffect(() => {
-    if (text) {
-      localStorage.setItem('codizulca_ventas_text_v1', text);
-    } else {
+    if (!text) {
       localStorage.removeItem('codizulca_ventas_text_v1');
+      return;
     }
+    const timer = setTimeout(() => {
+      localStorage.setItem('codizulca_ventas_text_v1', text);
+    }, 400);
+    return () => clearTimeout(timer);
   }, [text]);
 
   useEffect(() => {

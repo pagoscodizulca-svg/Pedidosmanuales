@@ -10,9 +10,9 @@ interface SeguimientoTableProps {
   onToggleAll?: () => void;
 }
 
-const PAGE_SIZE = 100;
+const PAGE_SIZE = 50;
 
-export const SeguimientoTable: React.FC<SeguimientoTableProps> = ({ orders, selectedIds, onToggle, onToggleAll }) => {
+export const SeguimientoTable: React.FC<SeguimientoTableProps> = React.memo(({ orders, selectedIds, onToggle, onToggleAll }) => {
   const selectable = !!selectedIds && !!onToggle && !!onToggleAll;
   const [selectedOrder, setSelectedOrder] = useState<DbOrder | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -244,4 +244,4 @@ export const SeguimientoTable: React.FC<SeguimientoTableProps> = ({ orders, sele
       )}
     </div>
   );
-};
+});

@@ -117,7 +117,7 @@ const SAIRU_SUPABASE_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51ZGx0Ymd5ZXd5aWtscWR5dWprIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MTgzMDA3OCwiZXhwIjoyMTA3NDA2MDc4fQ.k92vdZiuVkTzAWNK8Fq71m1Xi_MoWtpx_eRQcZTw1cA';
 const deletedAlkostoIdsMemory = new Set<string>();
 let lastSairuSyncRun = 0;
-const SAIRU_SYNC_INTERVAL_MS = 3 * 1000; // Intervalo corto (3s) para capturar lotes de 7+ pedidos en ráfaga sin bloqueos
+const SAIRU_SYNC_INTERVAL_MS = 30 * 1000; // Intervalo de 30s en segundo plano para evitar bloquear peticiones HTTP
 
 function parseFirestoreVal(v: any): any {
   if (!v || typeof v !== 'object') return v;
@@ -661,9 +661,13 @@ router.get('/', async (req, res) => {
   try {
     // Se dispara en segundo plano si ya pasaron 6 horas (no bloquea la respuesta HTTP)
     triggerCutoffIfDue();
-    // Asegura que las órdenes de compra cargadas hoy en la app de Sairú estén sincronizadas antes de responder
+    // Si forceSync es explícito espera; de lo contrario sincroniza Sairú en segundo plano sin bloquear la lectura
     const forceSync = req.query.forceSync === '1' || req.query.forceSync === 'true';
-    await ensureSairuSyncIfDue(forceSync);
+    if (forceSync) {
+      await ensureSairuSyncIfDue(true);
+    } else {
+      void ensureSairuSyncIfDue(false);
+    }
     
     const [activeQuery, waitingQuery] = await Promise.all([
       supabase
@@ -1083,14 +1087,7 @@ async function loadReadOnlyHistoricalArchiveOrders(firstDayDateStr: string): Pro
   return archiveLoadInFlight;
 }
 
-// Pre-cargar caché de historial en segundo plano al iniciar el servidor (solo lectura)
-setTimeout(() => {
-  const now = new Date();
-  const firstDayDateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-  loadReadOnlyHistoricalArchiveOrders(firstDayDateStr).catch(() => {});
-}, 100);
-
-// GET histórico de pedidos archivados y de meses anteriores (estrictamente SOLO LECTURA)
+// GET histórico de pedidos archivados y de meses anteriores (estrictamente SOLO LECTURA y Lazy Load bajo demanda)
 router.get('/history', async (_req, res) => {
   try {
     const now = new Date();

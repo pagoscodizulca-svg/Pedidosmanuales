@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useAppStore } from '../store/index.js';
 import { DbOrder } from '../types.js';
-import { CheckCircle, XCircle, Search, User, MapPin, Hash, Calendar, FileText, CheckSquare, Eye, RotateCcw } from 'lucide-react';
+import { CheckCircle, XCircle, Search, User, MapPin, Hash, Calendar, FileText, CheckSquare, Eye, RotateCcw, ChevronLeft, ChevronRight } from 'lucide-react';
 import { SeguimientoBlock } from '../components/shared/SeguimientoBlock';
 import { OrderModal } from '../components/shared/OrderModal';
 import { InlineNoteForm } from '../components/shared/InlineNoteForm';
@@ -14,6 +14,8 @@ import {
   matchVendedor,
 } from '../utils/vendedorFilter';
 
+const CXC_PAGE_SIZE = 50;
+
 export const CXC: React.FC = () => {
   const { orders, fetchOrders, updateOrderStatus, updateBatchOrderStatus, updateSupervisor, loading } = useAppStore();
   
@@ -25,11 +27,27 @@ export const CXC: React.FC = () => {
   const [filterCorrelativo, setFilterCorrelativo] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
   
   // Applied Filters for execution
   const [appliedFilters, setAppliedFilters] = useState({
     vendedor: '', zona: '', cliente: '', correlativo: '', dateFrom: '', dateTo: ''
   });
+
+  // Debounce automático (250 ms) para búsquedas por texto y selectores
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setAppliedFilters({
+        vendedor: filterVendedor,
+        zona: filterZona,
+        cliente: filterCliente,
+        correlativo: filterCorrelativo,
+        dateFrom,
+        dateTo,
+      });
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [filterVendedor, filterZona, filterCliente, filterCorrelativo, dateFrom, dateTo]);
 
   // Selection & Modals
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -39,11 +57,26 @@ export const CXC: React.FC = () => {
     fetchOrders();
   }, [fetchOrders]);
 
-  // KPI Calculations (ignoring filters, global for the module)
-  const kpiPendientes = orders.filter(o => o.status === 'PENDIENTE_CXC' && !o.isArchived).length;
-  const kpiFacturacion = orders.filter(o => o.status === 'PENDIENTE_FACTURACION' && !o.isArchived).length;
-  const kpiProcesados = orders.filter(o => o.status === 'COMPLETADO' && !o.isArchived).length;
-  const kpiRechazados = orders.filter(o => o.status === 'RECHAZADO' && !o.isArchived).length;
+  // KPI Calculations (ignoring filters, global for the module, memoized in 1 pass)
+  const { kpiPendientes, kpiFacturacion, kpiProcesados, kpiRechazados } = useMemo(() => {
+    let pendientes = 0;
+    let facturacion = 0;
+    let procesados = 0;
+    let rechazados = 0;
+    for (const o of orders) {
+      if (o.isArchived) continue;
+      if (o.status === 'PENDIENTE_CXC') pendientes++;
+      else if (o.status === 'PENDIENTE_FACTURACION') facturacion++;
+      else if (o.status === 'COMPLETADO') procesados++;
+      else if (o.status === 'RECHAZADO') rechazados++;
+    }
+    return {
+      kpiPendientes: pendientes,
+      kpiFacturacion: facturacion,
+      kpiProcesados: procesados,
+      kpiRechazados: rechazados,
+    };
+  }, [orders]);
 
   // Opciones dinámicas agrupadas de vendedores (catálogo base + columna `ruta` de Supabase)
   const vendedorOptions = useMemo(
@@ -110,6 +143,18 @@ export const CXC: React.FC = () => {
       return true;
     }).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }, [orders, activeTab, appliedFilters]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeTab, filteredOrders.length]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredOrders.length / CXC_PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages);
+  const startIndex = (safePage - 1) * CXC_PAGE_SIZE;
+  const visibleOrders = useMemo(
+    () => filteredOrders.slice(startIndex, startIndex + CXC_PAGE_SIZE),
+    [filteredOrders, startIndex]
+  );
 
   // Actions
   const handleAprobar = async (id: string) => {
@@ -337,7 +382,7 @@ export const CXC: React.FC = () => {
           </div>
         ) : (
           <div className="space-y-4">
-            {filteredOrders.map(o => {
+            {visibleOrders.map(o => {
               const arts = o.order.articulos.filter(a => a.descripcion || a.cantidad_solicitada > 0);
               const isSelected = selectedIds.has(o.id);
               
@@ -485,6 +530,35 @@ export const CXC: React.FC = () => {
                 </div>
               );
             })}
+
+            {filteredOrders.length > CXC_PAGE_SIZE && (
+              <div className="px-5 py-3 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-3 text-xs text-slate-600">
+                <div className="font-semibold">
+                  Mostrando <span className="font-bold text-slate-900">{startIndex + 1}</span> – <span className="font-bold text-slate-900">{Math.min(startIndex + CXC_PAGE_SIZE, filteredOrders.length)}</span> de <span className="font-bold text-slate-900">{filteredOrders.length}</span> pedidos
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    disabled={safePage <= 1}
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 bg-white font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <ChevronLeft size={14} /> Anterior
+                  </button>
+                  <span className="px-2 font-bold text-slate-700">
+                    Página {safePage} de {totalPages}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                    disabled={safePage >= totalPages}
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 bg-white font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Siguiente <ChevronRight size={14} />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

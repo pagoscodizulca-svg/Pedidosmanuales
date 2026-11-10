@@ -436,6 +436,9 @@ function dedupeAndFilterHistoryOrders(list: DbOrder[]): DbOrder[] {
   return result;
 }
 
+let inFlightFetchOrders: Promise<void> | null = null;
+let inFlightFetchHistory: Promise<void> | null = null;
+
 export const useAppStore = create<AppState>((set, get) => ({
   orders: [],
   historyOrders: [],
@@ -443,119 +446,137 @@ export const useAppStore = create<AppState>((set, get) => ({
   error: null,
   
   fetchHistory: async () => {
+    if (inFlightFetchHistory) return inFlightFetchHistory;
     const isInitial = get().historyOrders.length === 0;
     if (isInitial) set({ loading: true, error: null });
-    try {
+    inFlightFetchHistory = (async () => {
       try {
-        const response = await apiFetch('/api/orders/history');
-        if (response.ok) {
-          const data = await response.json();
-          if (Array.isArray(data) && data.length > 0) {
-            set({ historyOrders: dedupeAndFilterHistoryOrders(data), loading: false, error: null });
-            return;
+        try {
+          const response = await apiFetch('/api/orders/history');
+          if (response.ok) {
+            const data = await response.json();
+            if (Array.isArray(data) && data.length > 0) {
+              set({ historyOrders: dedupeAndFilterHistoryOrders(data), loading: false, error: null });
+              return;
+            }
+          }
+        } catch (apiErr) {
+          console.warn('Fallback directo a lectura de historial tras fallo de /api/orders/history:', apiErr);
+        }
+
+        const now = new Date();
+        const firstDayDateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+        const firstDayIsoStr = new Date(Date.UTC(now.getFullYear(), now.getMonth(), 1, 0, 0, 0)).toISOString();
+
+        let allArchivedRows: any[] = [];
+        let page = 0;
+        const limit = 1000;
+        let hasMore = true;
+
+        while (hasMore) {
+          const { data: pageRows, error: fbError } = await supabase
+            .from('orders')
+            .select('*')
+            .or(`is_archived.eq.true,fecha.lt.${firstDayDateStr},created_at.lt.${firstDayIsoStr}`)
+            .order('created_at', { ascending: false })
+            .range(page * limit, (page + 1) * limit - 1);
+
+          if (fbError) throw fbError;
+
+          if (pageRows && pageRows.length > 0) {
+            allArchivedRows = allArchivedRows.concat(pageRows);
+            page++;
+            if (pageRows.length < limit) hasMore = false;
+          } else {
+            hasMore = false;
           }
         }
-      } catch (apiErr) {
-        console.warn('Fallback directo a lectura de historial tras fallo de /api/orders/history:', apiErr);
+
+        const mappedHistory = allArchivedRows.map((row: any) => {
+          const mapped = mapDirectSupabaseRowToDbOrder(row);
+          mapped.isArchived = true;
+          return mapped;
+        });
+        set({ historyOrders: dedupeAndFilterHistoryOrders(mappedHistory), loading: false, error: null });
+      } catch (err: any) {
+        console.error('Error al sincronizar el historial de pedidos:', err);
+        set({ error: err?.message || 'Error al cargar el historial', loading: false });
+      } finally {
+        inFlightFetchHistory = null;
       }
-
-      const now = new Date();
-      const firstDayDateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-      const firstDayIsoStr = new Date(Date.UTC(now.getFullYear(), now.getMonth(), 1, 0, 0, 0)).toISOString();
-
-      let allArchivedRows: any[] = [];
-      let page = 0;
-      const limit = 1000;
-      let hasMore = true;
-
-      while (hasMore) {
-        const { data: pageRows, error: fbError } = await supabase
-          .from('orders')
-          .select('*')
-          .or(`is_archived.eq.true,fecha.lt.${firstDayDateStr},created_at.lt.${firstDayIsoStr}`)
-          .order('created_at', { ascending: false })
-          .range(page * limit, (page + 1) * limit - 1);
-
-        if (fbError) throw fbError;
-
-        if (pageRows && pageRows.length > 0) {
-          allArchivedRows = allArchivedRows.concat(pageRows);
-          page++;
-          if (pageRows.length < limit) hasMore = false;
-        } else {
-          hasMore = false;
-        }
-      }
-
-      const mappedHistory = allArchivedRows.map((row: any) => {
-        const mapped = mapDirectSupabaseRowToDbOrder(row);
-        mapped.isArchived = true;
-        return mapped;
-      });
-      set({ historyOrders: dedupeAndFilterHistoryOrders(mappedHistory), loading: false, error: null });
-    } catch (err: any) {
-      console.error('Error al sincronizar el historial de pedidos:', err);
-      set({ error: err?.message || 'Error al cargar el historial', loading: false });
-    }
+    })();
+    return inFlightFetchHistory;
   },
 
   fetchOrders: async () => {
+    if (inFlightFetchOrders) return inFlightFetchOrders;
     const isInitial = get().orders.length === 0;
     if (isInitial) set({ loading: true, error: null });
-    try {
-      const [apiResult, directWaitingResult, deletedResult] = await Promise.allSettled([
-        apiFetch('/api/orders'),
-        supabase
-          .from('orders')
-          .select('*')
-          .in('status', WAITING_ROOM_QUERY_STATUSES)
-          .order('created_at', { ascending: false }),
-        supabase
-          .from('deleted_orders')
-          .select('id')
-          .order('deleted_at', { ascending: false })
-          .limit(300)
-      ]);
-
-      if (deletedResult.status === 'fulfilled' && Array.isArray(deletedResult.value.data)) {
-        const dbDeletedIds = deletedResult.value.data.map((r: any) => String(r.id)).filter(Boolean);
-        if (dbDeletedIds.length > 0) {
-          rememberDeletedIdsClient(dbDeletedIds);
+    inFlightFetchOrders = (async () => {
+      try {
+        try {
+          const response = await apiFetch('/api/orders');
+          if (response.ok) {
+            const data = await response.json();
+            if (Array.isArray(data)) {
+              set({ orders: dedupeAndFilterOrders(data), loading: false, error: null });
+              return;
+            }
+          }
+        } catch (apiErr) {
+          console.warn('Fallback directo a Supabase tras fallo temporal en /api/orders:', apiErr);
         }
+
+        // Fallback directo a Supabase solo si el backend está reiniciando o el token falló temporalmente
+        const [fallbackResult, directWaitingResult, deletedResult] = await Promise.allSettled([
+          supabase
+            .from('orders')
+            .select('*')
+            .or('is_archived.is.false,is_archived.is.null')
+            .order('created_at', { ascending: false })
+            .range(0, 999),
+          supabase
+            .from('orders')
+            .select('*')
+            .in('status', WAITING_ROOM_QUERY_STATUSES)
+            .order('created_at', { ascending: false }),
+          supabase
+            .from('deleted_orders')
+            .select('id')
+            .order('deleted_at', { ascending: false })
+            .limit(300)
+        ]);
+
+        if (deletedResult.status === 'fulfilled' && Array.isArray(deletedResult.value.data)) {
+          const dbDeletedIds = deletedResult.value.data.map((r: any) => String(r.id)).filter(Boolean);
+          if (dbDeletedIds.length > 0) {
+            rememberDeletedIdsClient(dbDeletedIds);
+          }
+        }
+
+        const directWaitingOrders: DbOrder[] =
+          directWaitingResult.status === 'fulfilled' && Array.isArray(directWaitingResult.value.data)
+            ? directWaitingResult.value.data
+                .filter((r: any) => r && r.is_archived !== true)
+                .map(mapDirectSupabaseRowToDbOrder)
+            : [];
+
+        if (fallbackResult.status === 'rejected') throw fallbackResult.reason;
+        if (fallbackResult.value.error) throw fallbackResult.value.error;
+
+        const mappedFallback = (fallbackResult.value.data || []).map(mapDirectSupabaseRowToDbOrder);
+        set({
+          orders: dedupeAndFilterOrders([...directWaitingOrders, ...mappedFallback]),
+          loading: false,
+          error: null,
+        });
+      } catch (err: any) {
+        set({ error: err.message, loading: false });
+      } finally {
+        inFlightFetchOrders = null;
       }
-
-      const directWaitingOrders: DbOrder[] =
-        directWaitingResult.status === 'fulfilled' && Array.isArray(directWaitingResult.value.data)
-          ? directWaitingResult.value.data
-              .filter((r: any) => r && r.is_archived !== true)
-              .map(mapDirectSupabaseRowToDbOrder)
-          : [];
-
-      if (apiResult.status === 'fulfilled' && apiResult.value.ok) {
-        const data = await apiResult.value.json();
-        const combined = [...directWaitingOrders, ...(Array.isArray(data) ? data : [])];
-        set({ orders: dedupeAndFilterOrders(combined), loading: false, error: null });
-        return;
-      }
-
-      // Fallback directo a Supabase si el backend está reiniciando o el token falló temporalmente
-      const { data: fallbackRows, error: fbError } = await supabase
-        .from('orders')
-        .select('*')
-        .or('is_archived.is.false,is_archived.is.null')
-        .order('created_at', { ascending: false })
-        .range(0, 999);
-
-      if (fbError) throw fbError;
-      const mappedFallback = (fallbackRows || []).map(mapDirectSupabaseRowToDbOrder);
-      set({
-        orders: dedupeAndFilterOrders([...directWaitingOrders, ...mappedFallback]),
-        loading: false,
-        error: null,
-      });
-    } catch (err: any) {
-      set({ error: err.message, loading: false });
-    }
+    })();
+    return inFlightFetchOrders;
   },
 
   syncAlkostoOrders: async () => {
@@ -566,14 +587,19 @@ export const useAppStore = create<AppState>((set, get) => ({
         body: JSON.stringify({ force: true })
       });
       const data = await response.json().catch(() => ({ syncedCount: 0 }));
-      if (Array.isArray(data?.waitingOrders) && data.waitingOrders.length > 0) {
-        set({ orders: dedupeAndFilterOrders([...data.waitingOrders, ...get().orders]) });
+      const syncedCount = Number(data?.syncedCount || 0);
+      if (Array.isArray(data?.waitingOrders)) {
+        const nonWaiting = get().orders.filter(
+          o => o.status !== 'POR_VALIDAR' && o.status !== 'ERROR_FORMATO'
+        );
+        set({ orders: dedupeAndFilterOrders([...data.waitingOrders, ...nonWaiting]) });
       }
-      await get().fetchOrders();
-      return Number(data?.syncedCount || 0);
+      if (syncedCount > 0) {
+        await get().fetchOrders();
+      }
+      return syncedCount;
     } catch (err: any) {
       console.warn('Error syncing Alkosto orders:', err);
-      await get().fetchOrders();
       return 0;
     }
   },
@@ -602,13 +628,14 @@ export const useAppStore = create<AppState>((set, get) => ({
                   : current.map(o => (o.id === mapped.id ? mapped : o));
 
               set({ orders: dedupeAndFilterOrders(nextOrders) });
+              return;
             }
           }
-          // Reconciliación diferida anti-ráfaga para lotes simultáneos de pedidos
+          // Solo reconciliar desde el servidor si el payload Realtime llegó sin fila completa
           if (realtimeBurstTimeout) clearTimeout(realtimeBurstTimeout);
           realtimeBurstTimeout = setTimeout(() => {
             get().fetchOrders().catch(() => {});
-          }, 450);
+          }, 600);
         } catch (rtErr) {
           console.warn('Error en listener Real-Time (INSERT/UPDATE) de Sala de Espera:', rtErr);
         }

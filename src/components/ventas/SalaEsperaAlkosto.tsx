@@ -279,11 +279,21 @@ export const SalaEsperaAlkosto: React.FC = () => {
   const [selectedOrder, setSelectedOrder] = useState<DbOrder | null>(null);
   const [selectedChain, setSelectedChain] = useState<'TODAS' | 'ALKOSTO' | 'FAMILIA' | 'OTRA'>('TODAS');
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [approvingIds, setApprovingIds] = useState<Set<string>>(new Set());
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isClearingAll, setIsClearingAll] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [feedbackBanner, setFeedbackBanner] = useState<{ type: 'success' | 'error' | 'warning'; message: string } | null>(null);
+
+  useEffect(() => {
+    if (!search) {
+      setDebouncedSearch('');
+      return;
+    }
+    const timer = setTimeout(() => setDebouncedSearch(search), 250);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   // Sincronización en Tiempo Real (Supabase postgres_changes INSERT/UPDATE) + Re-consulta inmediata al recuperar foco
   useEffect(() => {
@@ -293,7 +303,7 @@ export const SalaEsperaAlkosto: React.FC = () => {
 
     const interval = setInterval(() => {
       syncAlkostoOrders().catch(() => {});
-    }, 10000);
+    }, 30000);
 
     const handleVisibilityOrFocus = () => {
       if (document.visibilityState === 'visible') {
@@ -354,6 +364,15 @@ export const SalaEsperaAlkosto: React.FC = () => {
       .sort((a, b) => getArrivalTs(b) - getArrivalTs(a));
   }, [orders]);
 
+  // Caché de metadatos pre-calculados por pedido en Sala de Espera para evitar recalcular regex/sumas en cada render
+  const orderMetaById = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof extractOrderReferenceMeta>>();
+    for (const o of pendingOrders) {
+      map.set(o.id, extractOrderReferenceMeta(o));
+    }
+    return map;
+  }, [pendingOrders]);
+
   // Clasificación insensible a mayúsculas/minúsculas y espacios (con pestaña Sin Clasificar / Revisión)
   const alkostoOrders = useMemo(() => {
     return pendingOrders.filter(o => detectOrderChain(o) === 'ALKOSTO');
@@ -370,21 +389,23 @@ export const SalaEsperaAlkosto: React.FC = () => {
   // Cuadre matemático de KPIs: suma dinámica verificada del 100% de los pedidos en Sala de Espera
   const totalMontoGeneral = useMemo(() => {
     return Number(
-      pendingOrders.reduce((sum, o) => sum + extractOrderReferenceMeta(o).verifiedTotal, 0).toFixed(2)
+      pendingOrders
+        .reduce((sum, o) => sum + (orderMetaById.get(o.id)?.verifiedTotal ?? extractOrderReferenceMeta(o).verifiedTotal), 0)
+        .toFixed(2)
     );
-  }, [pendingOrders]);
+  }, [pendingOrders, orderMetaById]);
 
-  // Filtrado según la pestaña activa y el buscador
+  // Filtrado según la pestaña activa y el buscador (con debounce)
   const filteredOrders = useMemo(() => {
     let list = pendingOrders;
     if (selectedChain === 'ALKOSTO') list = alkostoOrders;
     else if (selectedChain === 'FAMILIA') list = familiaOrders;
     else if (selectedChain === 'OTRA') list = sinClasificarOrders;
 
-    if (search.trim()) {
-      const term = search.toLowerCase().trim();
+    if (debouncedSearch.trim()) {
+      const term = debouncedSearch.toLowerCase().trim();
       list = list.filter(o => {
-        const meta = extractOrderReferenceMeta(o);
+        const meta = orderMetaById.get(o.id) || extractOrderReferenceMeta(o);
         return (
           meta.sedeName.toLowerCase().includes(term) ||
           meta.clientCode.toLowerCase().includes(term) ||
@@ -397,7 +418,7 @@ export const SalaEsperaAlkosto: React.FC = () => {
     }
 
     return list;
-  }, [pendingOrders, selectedChain, alkostoOrders, familiaOrders, sinClasificarOrders, search]);
+  }, [pendingOrders, selectedChain, alkostoOrders, familiaOrders, sinClasificarOrders, debouncedSearch, orderMetaById]);
 
   // Log de diagnóstico de auditoría en consola (Fase 4.3)
   useEffect(() => {
@@ -763,7 +784,7 @@ export const SalaEsperaAlkosto: React.FC = () => {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredOrders.map(o => {
-            const meta = extractOrderReferenceMeta(o);
+            const meta = orderMetaById.get(o.id) || extractOrderReferenceMeta(o);
             const isApproving = approvingIds.has(o.id);
             const isFormatError = o.status === 'ERROR_FORMATO' || String(o.cxcNote || '').startsWith('ERROR_FORMATO:');
             const isAlkostoSairu = isAlkostoSairuOrder(o);
