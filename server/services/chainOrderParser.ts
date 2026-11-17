@@ -25,7 +25,9 @@ export const CHAIN_STORES_CATALOG: ChainStoreDefinition[] = [
   { tag: 'AK08', codigo: '7905', codigoPadded: '007905', nombre: 'ALKOSTO 8 - TRUJILLO', cadena: 'ALKOSTO', aliases: ['ALKOSTO 8', 'ALKOSTO 08', 'TRUJILLO', 'EL MILAGRO', 'AK08', 'AK8', '7905', '007905'] },
   { tag: 'AK09', codigo: '8160', codigoPadded: '008160', nombre: 'ALKOSTO 9 - ANTIGUO NASA ZONA INDUSTRIAL', cadena: 'ALKOSTO', aliases: ['ALKOSTO 9', 'ALKOSTO 09', 'ANTIGUO NASA', 'ZONA INDUSTRIAL', 'AK09', 'AK9', '8160', '008160'] },
   { tag: 'AK10', codigo: '8306', codigoPadded: '008306', nombre: 'ALKOSTO 10 - LA LIMPIA', cadena: 'ALKOSTO', aliases: ['ALKOSTO 10', 'LA LIMPIA', 'AK10', '8306', '008306'] },
+  { tag: 'AK11', codigo: '1560', codigoPadded: '001560', nombre: 'ALKOSTO 11', cadena: 'ALKOSTO', aliases: ['ALKOSTO 11', 'AK11'] },
   { tag: 'AKOP', codigo: '1560', codigoPadded: '001560', nombre: 'ALKOSTO SEDE PRINCIPAL / AKOP', cadena: 'ALKOSTO', aliases: ['AKOP', 'ALKOSTO DONDE COMPRAR ES GANAR', '1560', '001560'] },
+  { tag: 'CI', codigo: '1560', codigoPadded: '001560', nombre: 'ALKOSTO CENTRO DE INVENTARIO / CI', cadena: 'ALKOSTO', aliases: ['ALKOSTO CENTRO DE INVENTARIO', 'GALPON ALKOSTO', 'CI'] },
 
   // --- FAMILIA CENTER (Códigos Oficiales Saint Codizulca / APP FDV) ---
   { tag: 'FC01', codigo: '7490', codigoPadded: '007490', nombre: 'FAMILIA CENTER 1 - PLAZA LAGO', cadena: 'FAMILIA CENTER', aliases: ['FAMILIA CENTER 1', 'FAMILIA CENTER 01', 'PLAZA LAGO', 'FC01', 'FC1', '7490', '007490'] },
@@ -35,11 +37,21 @@ export const CHAIN_STORES_CATALOG: ChainStoreDefinition[] = [
   { tag: 'FC05', codigo: '7489', codigoPadded: '007489', nombre: 'FAMILIA CENTER 5 - LA LAGO', cadena: 'FAMILIA CENTER', aliases: ['FAMILIA CENTER 5', 'FAMILIA CENTER 05', 'LA LAGO', 'FC05', 'FC5', '7489', '007489'] },
   { tag: 'FC06', codigo: '7493', codigoPadded: '007493', nombre: 'FAMILIA CENTER 6 - LOS OLIVOS', cadena: 'FAMILIA CENTER', aliases: ['FAMILIA CENTER 6', 'FAMILIA CENTER 06', 'LOS OLIVOS', 'FC06', 'FC6', '7493', '007493'] },
   { tag: 'FC07', codigo: '8229', codigoPadded: '008229', nombre: 'FAMILIA CENTER 7 - SAN FRANCISCO', cadena: 'FAMILIA CENTER', aliases: ['FAMILIA CENTER 7', 'FAMILIA CENTER 07', 'FC07', 'FC7', '8229', '008229'] },
+  { tag: 'FC08', codigo: '8144', codigoPadded: '008144', nombre: 'FAMILIA CENTER 8', cadena: 'FAMILIA CENTER', aliases: ['FAMILIA CENTER 8', 'FAMILIA CENTER 08', 'FC08', 'FC8', '8144', '008144'] },
   { tag: 'FCOP', codigo: '5373', codigoPadded: '005373', nombre: 'FAMILIA CENTER SEDE PRINCIPAL / FCOP', cadena: 'FAMILIA CENTER', aliases: ['FCOP', 'FAMILIA CENTER, C.A.', 'FAMILIA CENTER C.A.', '5373', '005373'] }
 ];
 
 // Mapa de códigos de barra EAN-13 y códigos de cadena (Alkosto / Familia Center) a SKUs oficiales Codizulca
 const CHAIN_CODE_TO_CODIZULCA_SKU: Record<string, { codigo: string; descripcion: string; unidad: string }> = {
+  '7590377000220': { codigo: '001543', descripcion: 'AZUCAR BLANCA VENCAMPO 1X20ND', unidad: 'BULTO' },
+  '1543': { codigo: '001543', descripcion: 'AZUCAR BLANCA VENCAMPO 1X20ND', unidad: 'BULTO' },
+  '001543': { codigo: '001543', descripcion: 'AZUCAR BLANCA VENCAMPO 1X20ND', unidad: 'BULTO' },
+  '7590377000503': { codigo: '001574', descripcion: 'LECHE EN POLVO VENCAMPO 10X400GR', unidad: 'BULTO' },
+  '1574': { codigo: '001574', descripcion: 'LECHE EN POLVO VENCAMPO 10X400GR', unidad: 'BULTO' },
+  '001574': { codigo: '001574', descripcion: 'LECHE EN POLVO VENCAMPO 10X400GR', unidad: 'BULTO' },
+  '7590377000510': { codigo: '001556', descripcion: 'LECHE EN POLVO VENCAMPO 10X900GR', unidad: 'BULTO' },
+  '1556': { codigo: '001556', descripcion: 'LECHE EN POLVO VENCAMPO 10X900GR', unidad: 'BULTO' },
+  '001556': { codigo: '001556', descripcion: 'LECHE EN POLVO VENCAMPO 10X900GR', unidad: 'BULTO' },
   '7590377000077': { codigo: '001496', descripcion: 'MORTADELA ESP D/POLLO ASTURIAS 10UNDX900GR', unidad: 'BULTO' },
   '1496': { codigo: '001496', descripcion: 'MORTADELA ESP D/POLLO ASTURIAS 10UNDX900GR', unidad: 'BULTO' },
   '001496': { codigo: '001496', descripcion: 'MORTADELA ESP D/POLLO ASTURIAS 10UNDX900GR', unidad: 'BULTO' },
@@ -246,9 +258,9 @@ export function resolveChainStore(
   // 3. Detección de cadena por texto
   const combined = `${codeStr} ${nameStr} ${origStr}`;
   let cadena: ChainOrigin = 'OTRA CADENA';
-  if (combined.includes('FAMILIA') || /\bFC0?[1-7]\b|\bFCOP\b/.test(combined)) {
+  if (combined.includes('FAMILIA') || /\bFC0?[1-8]\b|\bFCOP\b/.test(combined)) {
     cadena = 'FAMILIA CENTER';
-  } else if (combined.includes('ALKOSTO') || /\bAK0?[1-9]\b|\bAK10\b|\bAKOP\b/.test(combined)) {
+  } else if (combined.includes('ALKOSTO') || /\bAK0?[1-9]\b|\bAK1[01]\b|\bAKOP\b/.test(combined)) {
     cadena = 'ALKOSTO';
   }
 

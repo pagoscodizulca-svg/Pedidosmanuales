@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx server.ts",
     "build": "tsc -b && vite build",
+    "postinstall": "npm run build",
     "start": "tsx server.ts",
     "lint": "oxlint",
     "test": "tsx --test tests/**/*.test.ts",
@@ -13,7 +14,6 @@
   },
   "dependencies": {
     "@google/genai": "^2.27.0",
-    "@oxlint/binding-win32-x64-msvc": "^1.89.0",
     "@supabase/supabase-js": "^2.117.2",
     "@tailwindcss/vite": "^4.3.3",
     "@types/cors": "^2.8.19",
@@ -51,6 +51,7 @@
     "oxlint": "^1.81.0"
   },
   "optionalDependencies": {
+    "@oxlint/binding-win32-x64-msvc": "^1.89.0",
     "lightningcss": "^1.33.0",
     "lightningcss-win32-x64-msvc": "^1.33.0"
   }

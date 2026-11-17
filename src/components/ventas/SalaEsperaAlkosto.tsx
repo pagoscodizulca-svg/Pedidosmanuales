@@ -27,8 +27,8 @@ const ALKOSTO_CODES = new Set([
   '007497', '007498', '007499', '007500', '007501', '007502', '007503', '007680', '007905', '008160', '008306', '001560'
 ]);
 const FAMILIA_CODES = new Set([
-  '7489', '7490', '7491', '7492', '7493', '7494', '8229', '5373',
-  '007489', '007490', '007491', '007492', '007493', '007494', '008229', '005373'
+  '7489', '7490', '7491', '7492', '7493', '7494', '8229', '8144', '5373',
+  '007489', '007490', '007491', '007492', '007493', '007494', '008229', '008144', '005373'
 ]);
 
 const WAITING_ROOM_STATUSES = new Set([
@@ -61,7 +61,7 @@ export function detectOrderChain(o: DbOrder): 'ALKOSTO' | 'FAMILIA' | 'OTRA' {
     id.startsWith('ALK-FC') ||
     FAMILIA_CODES.has(idCli) ||
     FAMILIA_CODES.has(idCliPadded) ||
-    /\bFC0?[1-7]\b|\bFCOP\b/.test(combined)
+    /\bFC0?[1-8]\b|\bFCOP\b/.test(combined)
   ) {
     return 'FAMILIA';
   }
@@ -74,7 +74,7 @@ export function detectOrderChain(o: DbOrder): 'ALKOSTO' | 'FAMILIA' | 'OTRA' {
     id.startsWith('ALK-AK') ||
     ALKOSTO_CODES.has(idCli) ||
     ALKOSTO_CODES.has(idCliPadded) ||
-    /\bAK0?[1-9]\b|\bAK10\b|\bAKOP\b/.test(combined)
+    /\bAK0?[1-9]\b|\bAK1[01]\b|\bAKOP\b/.test(combined)
   ) {
     return 'ALKOSTO';
   }
